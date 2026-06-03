@@ -70,6 +70,9 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
     try:
         if name == "get_house_state":
             states = await get_states(inputs.get("entity_ids") or None)
+            # strip heavy attributes when returning all states to avoid token bloat
+            if not inputs.get("entity_ids"):
+                states = [{"entity_id": s["entity_id"], "state": s["state"]} for s in states]
             return json.dumps(states, ensure_ascii=False)
         if name == "control_device":
             result = await call_service(inputs["domain"], inputs["service"], inputs["data"])

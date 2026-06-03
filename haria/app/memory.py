@@ -2,7 +2,7 @@ import aiosqlite
 import os
 
 DB_PATH = os.environ.get("DB_PATH", "/config/haria.db")
-MAX_HISTORY = 20
+MAX_HISTORY = 10
 
 
 async def init_db():
