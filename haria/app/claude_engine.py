@@ -213,11 +213,24 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
             mp = inputs["media_player"]
             object_id = mp.split(".", 1)[1] if "." in mp else mp
             notify_service = f"alexa_media_{object_id}"
-            result = await call_service("notify", notify_service, {
-                "message": inputs["message"],
-                "data": {"type": "announce"},
-            })
-            return json.dumps(result, ensure_ascii=False)
+            message = inputs["message"]
+            for announce_type in ("announce", "tts"):
+                try:
+                    await call_service("notify", notify_service, {
+                        "message": message,
+                        "data": {"type": announce_type},
+                    })
+                    return json.dumps(
+                        {"ok": True, "mode": announce_type, "device": mp},
+                        ensure_ascii=False,
+                    )
+                except Exception as e:
+                    logger.warning("speak_alexa %s su %s fallito: %s", announce_type, mp, e)
+                    last_error = e
+            return json.dumps(
+                {"ok": False, "error": str(last_error), "device": mp},
+                ensure_ascii=False,
+            )
         if name == "search_web":
             results = await web_search.search(inputs["query"], inputs.get("max_results", 5))
             return json.dumps(results, ensure_ascii=False) if results else "Nessun risultato."
