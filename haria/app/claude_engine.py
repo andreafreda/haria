@@ -1,13 +1,13 @@
 import json
 import logging
-import os
 import anthropic
 from ha_client import get_states, call_service
 from memory import get_history, save_turn, get_notes, save_note
+import config as cfg
 
 logger = logging.getLogger(__name__)
 
-client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+client = anthropic.AsyncAnthropic(api_key=cfg.get("anthropic_key"))
 MODEL = "claude-haiku-4-5-20251001"
 
 TOOLS = [

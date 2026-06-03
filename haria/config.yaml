@@ -15,6 +15,7 @@ panel_icon: mdi:robot
 panel_title: HARIA
 map:
   - data
+  - config:rw
 services:
   - mqtt:want
 options:

@@ -1,18 +1,14 @@
 import logging
 import os
-import json
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from claude_engine import chat
+import config as cfg
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = os.environ.get("CONFIG_PATH", "/data/options.json")
-
 
 def _load_users() -> dict[str, dict]:
-    with open(CONFIG_PATH) as f:
-        cfg = json.load(f)
     return {str(u["chat_id"]): u for u in cfg.get("users", [])}
 
 

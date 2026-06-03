@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import aiohttp
+import config as cfg
 from memory import init_db
 from telegram_handler import build_app
 
@@ -81,9 +82,9 @@ async def _release_bot(token: str):
 
 
 async def main():
-    token = os.environ.get("TELEGRAM_TOKEN", "")
+    token = cfg.get("telegram_token") or os.environ.get("TELEGRAM_TOKEN", "")
     if not token:
-        logger.error("TELEGRAM_TOKEN non configurato")
+        logger.error("telegram_token non configurato")
         return
 
     logger.info("Inizializzazione DB...")
