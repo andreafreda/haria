@@ -3,7 +3,7 @@ import logging
 import anthropic
 from anthropic import RateLimitError
 from ha_client import get_states, call_service
-from memory import get_history, save_turn, get_notes, save_note
+from memory import get_history, save_turn, get_notes, save_note, get_entity_cache, save_entity_cache, clear_entity_cache
 import config as cfg
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ MODEL = "claude-haiku-4-5-20251001"
 TOOLS = [
     {
         "name": "get_house_state",
-        "description": "Legge lo stato di entità da Home Assistant. Usa entity_ids per filtrare, lascia vuoto per tutte.",
+        "description": "Scopri entità HA o leggi stato live. Senza entity_ids: restituisce lista cached (entity_id + nome) per trovare l'entity_id giusto. Con entity_ids: restituisce stato live di quelle entità.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -76,15 +76,32 @@ TOOLS = [
 ]
 
 
+async def refresh_entity_cache() -> int:
+    states = await get_states(None)
+    slim = [
+        {"entity_id": s["entity_id"], "name": s["attributes"].get("friendly_name", s["entity_id"])}
+        for s in states
+    ]
+    await save_entity_cache(json.dumps(slim, ensure_ascii=False))
+    logger.info("Entity cache aggiornata: %d entità", len(slim))
+    return len(slim)
+
+
 async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
     logger.info("Tool call: %s inputs=%s", name, inputs)
     try:
         if name == "get_house_state":
-            states = await get_states(inputs.get("entity_ids") or None)
-            # strip heavy attributes when returning all states to avoid token bloat
-            if not inputs.get("entity_ids"):
-                states = [{"entity_id": s["entity_id"], "state": s["state"]} for s in states]
-            return json.dumps(states, ensure_ascii=False)
+            entity_ids = inputs.get("entity_ids") or None
+            if entity_ids:
+                # specific entities: return live state
+                states = await get_states(entity_ids)
+                return json.dumps(states, ensure_ascii=False)
+            # no filter: return cached entity list (entity_id + name only, no live state)
+            cached = await get_entity_cache()
+            if cached:
+                return cached
+            await refresh_entity_cache()
+            return await get_entity_cache()
         if name == "control_device":
             result = await call_service(inputs["domain"], inputs["service"], inputs["data"])
             return json.dumps(result, ensure_ascii=False)

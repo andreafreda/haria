@@ -23,6 +23,11 @@ async def init_db():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, key)
             );
+            CREATE TABLE IF NOT EXISTS entity_cache (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                data TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         await db.commit()
 
@@ -70,5 +75,29 @@ async def save_note(user_id: str, key: str, value: str):
                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP""",
             (user_id, key, value),
+        )
+        await db.commit()
+
+
+async def get_entity_cache() -> str | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT data FROM entity_cache WHERE id = 1")
+        row = await cursor.fetchone()
+    return row[0] if row else None
+
+
+async def clear_entity_cache():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM entity_cache WHERE id = 1")
+        await db.commit()
+
+
+async def save_entity_cache(data: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO entity_cache (id, data, updated_at)
+               VALUES (1, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=CURRENT_TIMESTAMP""",
+            (data,),
         )
         await db.commit()

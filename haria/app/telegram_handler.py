@@ -2,7 +2,7 @@ import logging
 import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from claude_engine import chat
+from claude_engine import chat, refresh_entity_cache
 from memory import clear_history
 import config as cfg
 
@@ -37,6 +37,16 @@ async def _handle_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await clear_history(chat_id)
     await update.message.reply_text("Memoria conversazione cancellata.")
+
+
+async def _handle_update_entities(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    chat_id = str(update.effective_chat.id)
+    if chat_id not in _load_users():
+        return
+    count = await refresh_entity_cache()
+    await update.message.reply_text(f"Cache entità aggiornata: {count} entità caricate.")
 
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,10 +110,22 @@ async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"_{text}_\n\n{reply}", parse_mode="Markdown")
 
 
+async def _job_refresh_entities(context):
+    try:
+        count = await refresh_entity_cache()
+        logger.info("Refresh automatico cache entità: %d entità", count)
+    except Exception as e:
+        logger.error("Refresh automatico cache entità fallito: %s", e)
+
+
 def build_app(token: str):
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", _handle_start))
     app.add_handler(CommandHandler("reset", _handle_reset))
+    app.add_handler(CommandHandler("updateentities", _handle_update_entities))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
     app.add_handler(MessageHandler(filters.VOICE, _handle_voice))
+    # refresh entity cache at startup and every 24h
+    app.job_queue.run_once(_job_refresh_entities, when=10)
+    app.job_queue.run_repeating(_job_refresh_entities, interval=86400, first=86400)
     return app
