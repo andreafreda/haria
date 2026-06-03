@@ -66,6 +66,7 @@ TOOLS = [
 
 
 async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
+    logger.info("Tool call: %s inputs=%s", name, inputs)
     try:
         if name == "get_house_state":
             states = await get_states(inputs.get("entity_ids") or None)

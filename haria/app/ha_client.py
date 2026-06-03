@@ -15,7 +15,7 @@ def _headers():
 
 
 def _base():
-    return cfg.get("ha_url", "http://homeassistant.local:8123")
+    return cfg.get("ha_url", "http://homeassistant:8123")
 
 
 async def get_states(entity_ids: list[str] | None = None) -> list[dict]:
@@ -44,18 +44,18 @@ async def get_states(entity_ids: list[str] | None = None) -> list[dict]:
 
 
 async def call_service(domain: str, service: str, data: dict) -> dict:
+    url = f"{_base()}/api/services/{domain}/{service}"
+    logger.info("call_service %s/%s data=%s", domain, service, data)
     try:
         async with aiohttp.ClientSession(timeout=TIMEOUT) as session:
-            async with session.post(
-                f"{_base()}/api/services/{domain}/{service}",
-                headers=_headers(),
-                json=data,
-            ) as resp:
+            async with session.post(url, headers=_headers(), json=data) as resp:
+                logger.info("call_service response: %s", resp.status)
                 if resp.status == 401:
                     raise PermissionError("HA token non valido o scaduto")
                 resp.raise_for_status()
                 return await resp.json()
-    except aiohttp.ClientConnectorError:
+    except aiohttp.ClientConnectorError as e:
+        logger.error("HA non raggiungibile: %s", e)
         raise ConnectionError(f"HA non raggiungibile su {_base()}")
     except TimeoutError:
         raise TimeoutError("HA non risponde (timeout 10s)")
