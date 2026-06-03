@@ -206,11 +206,20 @@ async def _build_system(user_config: dict) -> list[dict]:
     ]
 
 
-async def chat(user_id: str, user_text: str, user_config: dict) -> str:
+async def chat(user_id: str, user_text: str, user_config: dict,
+               image_b64: str | None = None, image_media_type: str = "image/jpeg") -> str:
     history = await get_history(user_id)
-    await save_turn(user_id, "user", user_text)
+    await save_turn(user_id, "user", user_text or "[foto]")
 
-    messages = history + [{"role": "user", "content": user_text}]
+    if image_b64:
+        content = [
+            {"type": "image", "source": {
+                "type": "base64", "media_type": image_media_type, "data": image_b64}},
+            {"type": "text", "text": user_text or "Analizza la foto del pasto e registralo con log_meal, stimando alimenti e valori nutrizionali."},
+        ]
+        messages = history + [{"role": "user", "content": content}]
+    else:
+        messages = history + [{"role": "user", "content": user_text}]
     system = await _build_system(user_config)
 
     try:

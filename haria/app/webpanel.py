@@ -1,0 +1,155 @@
+"""Pannello web HARIA (ingress HA, porta 8099).
+
+Dashboard sola-lettura:
+  - Piano pasti settimanale (cosa cucinare)
+  - Diario per membro (cosa ha mangiato + kcal)
+  - Profili + peso/BMI
+  - Lista della spesa
+"""
+import logging
+from datetime import date, timedelta
+from aiohttp import web
+from memory import (
+    get_meal_plan, list_profiles, list_members_with_meals,
+    get_meals, get_day_totals, get_hydration_day, get_shopping_list,
+    get_weight_history,
+)
+
+logger = logging.getLogger(__name__)
+
+_MEAL_ORDER = {"colazione": 0, "pranzo": 1, "snack": 2, "cena": 3}
+_GIORNI = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
+
+_CSS = """
+body{font-family:system-ui,sans-serif;margin:0;background:#f4f6f8;color:#222}
+header{background:#3367d6;color:#fff;padding:14px 20px;font-size:20px;font-weight:600}
+nav{background:#fff;padding:8px 20px;border-bottom:1px solid #ddd}
+nav a{margin-right:16px;color:#3367d6;text-decoration:none;font-weight:500}
+main{padding:20px;max-width:1100px;margin:0 auto}
+h2{margin-top:28px;color:#3367d6}
+table{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:16px}
+th,td{padding:8px 12px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
+th{background:#eef2fb}
+.card{background:#fff;border-radius:8px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:16px}
+.kcal{font-weight:600;color:#3367d6}
+.muted{color:#888;font-size:13px}
+.chk{color:#39a845}
+"""
+
+
+def _page(title: str, body: str) -> web.Response:
+    html = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HARIA — {title}</title><style>{_CSS}</style></head><body>
+<header>🤖 HARIA — Diario Alimentare</header>
+<nav><a href="./">Piano</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a></nav>
+<main>{body}</main></body></html>"""
+    return web.Response(text=html, content_type="text/html")
+
+
+async def _h_plan(request):
+    start = date.today() - timedelta(days=date.today().weekday())
+    days = [(start + timedelta(days=i)) for i in range(7)]
+    plan = await get_meal_plan(days[0].isoformat(), days[-1].isoformat())
+    by_day = {}
+    for m in plan:
+        by_day.setdefault(m["date"], []).append(m)
+    body = "<h2>Piano settimanale — cosa cucinare</h2>"
+    if not plan:
+        body += "<div class='card muted'>Nessun piano per questa settimana. Chiedi a HARIA su Telegram: «pianifica la settimana».</div>"
+    for i, d in enumerate(days):
+        iso = d.isoformat()
+        meals = sorted(by_day.get(iso, []), key=lambda m: _MEAL_ORDER.get(m["meal_type"], 9))
+        body += f"<div class='card'><b>{_GIORNI[i]} {d.strftime('%d/%m')}</b>"
+        if not meals:
+            body += " <span class='muted'>— niente pianificato</span>"
+        else:
+            body += "<table><tr><th>Pasto</th><th>Portate</th><th>Ricetta</th><th>Porz.</th></tr>"
+            for m in meals:
+                body += (f"<tr><td>{m['meal_type']}</td><td>{m['items'] or ''}</td>"
+                         f"<td class='muted'>{m['recipe'] or ''}</td><td>{m['servings'] or ''}</td></tr>")
+            body += "</table>"
+        body += "</div>"
+    return _page("Piano", body)
+
+
+async def _h_diary(request):
+    day = request.query.get("date") or date.today().isoformat()
+    members = await list_members_with_meals(day)
+    body = f"<h2>Diario del {day}</h2>"
+    if not members:
+        body += "<div class='card muted'>Nessun pasto registrato in questa data.</div>"
+    for member in members:
+        meals = await get_meals(member, day + "T00:00:00", day + "T23:59:59")
+        totals = await get_day_totals(member, day)
+        hydr = await get_hydration_day(member, day)
+        body += (f"<div class='card'><b>{member.capitalize()}</b> "
+                 f"<span class='kcal'>{totals['kcal']} kcal</span> "
+                 f"<span class='muted'>P {totals['protein_g']}g · C {totals['carbs_g']}g · G {totals['fat_g']}g · 💧 {hydr['ml_total']} ml</span>")
+        if meals:
+            body += "<table><tr><th>Pasto</th><th>Descrizione</th><th>kcal</th></tr>"
+            for m in sorted(meals, key=lambda x: _MEAL_ORDER.get(x['meal_type'], 9)):
+                body += f"<tr><td>{m['meal_type']}</td><td>{m['description']}</td><td>{m['kcal_total'] or ''}</td></tr>"
+            body += "</table>"
+        body += "</div>"
+    return _page("Diario", body)
+
+
+async def _h_profiles(request):
+    profs = await list_profiles()
+    body = "<h2>Profili famiglia</h2>"
+    if not profs:
+        body += "<div class='card muted'>Nessun profilo. Chiedi a HARIA di impostarlo.</div>"
+    else:
+        body += ("<table><tr><th>Membro</th><th>Sesso</th><th>Età</th><th>Altezza</th>"
+                 "<th>Peso</th><th>BMI</th><th>Obiettivo</th><th>Attività</th><th>kcal/g</th></tr>")
+        for p in profs:
+            body += (f"<tr><td>{p['member']}</td><td>{p['sex'] or ''}</td><td>{p['age'] or ''}</td>"
+                     f"<td>{p['height_cm'] or ''}</td><td>{p['weight_kg'] or ''}</td><td>{p['bmi'] or ''}</td>"
+                     f"<td>{p['goal'] or ''}</td><td>{p['activity_level'] or ''}</td><td>{p['kcal_target'] or ''}</td></tr>")
+        body += "</table>"
+        for p in profs:
+            hist = await get_weight_history(p["member"], limit=10)
+            if hist:
+                body += f"<div class='card'><b>Peso {p['member']}</b><table><tr><th>Data</th><th>kg</th><th>BMI</th></tr>"
+                for h in hist:
+                    body += f"<tr><td>{h['logged_at']}</td><td>{h['weight_kg']}</td><td>{h['bmi'] or ''}</td></tr>"
+                body += "</table></div>"
+    return _page("Profili", body)
+
+
+async def _h_shopping(request):
+    items = await get_shopping_list(include_checked=True)
+    body = "<h2>Lista della spesa</h2>"
+    if not items:
+        body += "<div class='card muted'>Lista vuota. Chiedi a HARIA: «genera la spesa dal piano».</div>"
+    else:
+        by_cat = {}
+        for it in items:
+            by_cat.setdefault(it["category"] or "Varie", []).append(it)
+        for cat, lst in by_cat.items():
+            body += f"<div class='card'><b>{cat}</b><table>"
+            for it in lst:
+                mark = "<span class='chk'>✔</span> " if it["checked"] else ""
+                body += f"<tr><td>{mark}{it['name']}</td><td class='muted'>{it['qty'] or ''}</td></tr>"
+            body += "</table></div>"
+    return _page("Spesa", body)
+
+
+def build_web_app() -> web.Application:
+    app = web.Application()
+    app.router.add_get("/", _h_plan)
+    app.router.add_get("/diary", _h_diary)
+    app.router.add_get("/profiles", _h_profiles)
+    app.router.add_get("/shopping", _h_shopping)
+    return app
+
+
+async def start(port: int = 8099):
+    app = build_web_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info("Pannello web HARIA su porta %d (ingress).", port)
+    return runner

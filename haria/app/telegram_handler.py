@@ -109,6 +109,26 @@ async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"_{text}_\n\n{reply}", parse_mode="Markdown")
 
 
+async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.photo:
+        return
+    chat_id = str(update.effective_chat.id)
+    users = _load_users()
+    if chat_id not in users:
+        return
+    import base64
+    photo = update.message.photo[-1]  # risoluzione massima
+    photo_file = await photo.get_file()
+    img_bytes = await photo_file.download_as_bytearray()
+    img_b64 = base64.b64encode(bytes(img_bytes)).decode("ascii")
+    caption = update.message.caption or ""
+
+    await update.message.chat.send_action("typing")
+    user_config = users[chat_id]
+    reply = await chat(chat_id, caption, user_config, image_b64=img_b64, image_media_type="image/jpeg")
+    await update.message.reply_text(reply)
+
+
 async def _job_refresh_entities(context):
     try:
         count = await refresh_entity_cache()
@@ -124,6 +144,7 @@ def build_app(token: str):
     app.add_handler(CommandHandler("updateentities", _handle_update_entities))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
     app.add_handler(MessageHandler(filters.VOICE, _handle_voice))
+    app.add_handler(MessageHandler(filters.PHOTO, _handle_photo))
     # refresh entity cache at startup and every 24h
     app.job_queue.run_once(_job_refresh_entities, when=10)
     app.job_queue.run_repeating(_job_refresh_entities, interval=86400, first=86400)

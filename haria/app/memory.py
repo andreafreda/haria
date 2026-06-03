@@ -92,6 +92,26 @@ async def init_db():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(date, meal_type)
             );
+            CREATE TABLE IF NOT EXISTS hydration_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member TEXT NOT NULL,
+                ml REAL NOT NULL,
+                logged_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS shopping_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                qty TEXT,
+                category TEXT,
+                checked INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS food_cache (
+                key TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                source TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         await db.commit()
 
@@ -369,3 +389,137 @@ async def get_meal_plan(date_from: str, date_to: str) -> list[dict]:
         {"date": r[0], "meal_type": r[1], "items": r[2], "recipe": r[3], "servings": r[4]}
         for r in rows
     ]
+
+
+async def get_day_totals(member: str, day: str) -> dict:
+    """Somma kcal/macro dei pasti di un membro in un giorno (YYYY-MM-DD)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT COALESCE(SUM(kcal_total),0), COALESCE(SUM(protein_g),0),
+                      COALESCE(SUM(carbs_g),0), COALESCE(SUM(fat_g),0), COUNT(*)
+               FROM meals WHERE member = ? AND DATE(eaten_at) = ?""",
+            (member, day),
+        )
+        r = await cursor.fetchone()
+    return {"kcal": round(r[0], 1), "protein_g": round(r[1], 1),
+            "carbs_g": round(r[2], 1), "fat_g": round(r[3], 1), "meals": r[4]}
+
+
+# ---- food_diary: idratazione ----
+
+async def add_hydration(member: str, ml: float) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO hydration_log (member, ml) VALUES (?, ?)", (member, ml)
+        )
+        await db.commit()
+        hid = cursor.lastrowid
+    return {"id": hid, "member": member, "ml": ml}
+
+
+async def get_hydration_day(member: str, day: str) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT COALESCE(SUM(ml),0), COUNT(*) FROM hydration_log
+               WHERE member = ? AND DATE(logged_at) = ?""",
+            (member, day),
+        )
+        r = await cursor.fetchone()
+    return {"ml_total": round(r[0], 1), "count": r[1]}
+
+
+# ---- food_diary: lista spesa ----
+
+async def add_shopping_items(items: list[dict]) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        for it in items or []:
+            await db.execute(
+                "INSERT INTO shopping_items (name, qty, category) VALUES (?, ?, ?)",
+                (it.get("name"), it.get("qty"), it.get("category")),
+            )
+        await db.commit()
+    return len(items or [])
+
+
+async def get_shopping_list(include_checked: bool = False) -> list[dict]:
+    q = "SELECT id, name, qty, category, checked FROM shopping_items"
+    if not include_checked:
+        q += " WHERE checked = 0"
+    q += " ORDER BY category, name"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(q)
+        rows = await cursor.fetchall()
+    return [{"id": r[0], "name": r[1], "qty": r[2], "category": r[3], "checked": bool(r[4])} for r in rows]
+
+
+async def check_shopping_item(name: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE shopping_items SET checked = 1 WHERE checked = 0 AND LOWER(name) LIKE LOWER(?)",
+            (f"%{name}%",),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def clear_shopping_list(only_checked: bool = False) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        if only_checked:
+            cursor = await db.execute("DELETE FROM shopping_items WHERE checked = 1")
+        else:
+            cursor = await db.execute("DELETE FROM shopping_items")
+        await db.commit()
+        return cursor.rowcount
+
+
+# ---- food_diary: cache valori nutrizionali ----
+
+async def get_food_cache(key: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT data, source FROM food_cache WHERE key = ?", (key.lower(),)
+        )
+        row = await cursor.fetchone()
+    if not row:
+        return None
+    import json as _json
+    d = _json.loads(row[0])
+    d["_source"] = row[1]
+    return d
+
+
+async def set_food_cache(key: str, data: dict, source: str):
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO food_cache (key, data, source, updated_at)
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET data=excluded.data,
+                 source=excluded.source, updated_at=CURRENT_TIMESTAMP""",
+            (key.lower(), _json.dumps(data, ensure_ascii=False), source),
+        )
+        await db.commit()
+
+
+# ---- webpanel: query lettura ----
+
+async def list_profiles() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT member, sex, age, height_cm, weight_kg, goal, activity_level,
+                      kcal_target, bmi FROM diet_profiles ORDER BY member"""
+        )
+        rows = await cursor.fetchall()
+    cols = ("member", "sex", "age", "height_cm", "weight_kg", "goal",
+            "activity_level", "kcal_target", "bmi")
+    return [dict(zip(cols, r)) for r in rows]
+
+
+async def list_members_with_meals(day: str) -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT DISTINCT member FROM meals WHERE DATE(eaten_at) = ? ORDER BY member",
+            (day,),
+        )
+        rows = await cursor.fetchall()
+    return [r[0] for r in rows]

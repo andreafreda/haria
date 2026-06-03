@@ -1,9 +1,13 @@
 import logging
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
-from memory import get_active_reminders, deactivate_reminder
+from memory import (
+    get_active_reminders, deactivate_reminder,
+    get_meal_plan, get_day_totals, get_profile,
+)
+import config as cfg
 
 logger = logging.getLogger(__name__)
 
@@ -72,3 +76,74 @@ def cancel_job(reminder_id: int):
 def shutdown():
     if _scheduler:
         _scheduler.shutdown(wait=False)
+
+
+# ---- food_diary: notifiche proattive ----
+
+_MEAL_ORDER = {"colazione": 0, "pranzo": 1, "snack": 2, "cena": 3}
+
+
+async def _food_morning():
+    """Manda a ogni utente il piano pasti di oggi."""
+    today = date.today().isoformat()
+    plan = await get_meal_plan(today, today)
+    if not plan:
+        return
+    plan.sort(key=lambda m: _MEAL_ORDER.get(m["meal_type"], 9))
+    lines = ["🍽️ Oggi si mangia:"]
+    for m in plan:
+        line = f"• {m['meal_type'].capitalize()}: {m['items']}"
+        if m.get("recipe"):
+            line += f" — {m['recipe']}"
+        lines.append(line)
+    text = "\n".join(lines)
+    for u in cfg.get("users", []):
+        chat_id = u.get("chat_id")
+        if not chat_id:
+            continue
+        try:
+            await _bot.send_message(chat_id=int(chat_id), text=text)
+        except Exception as e:
+            logger.warning("Invio piano giornaliero a %s fallito: %s", chat_id, e)
+
+
+async def _food_weekly():
+    """Report settimanale: media kcal/giorno per membro."""
+    end = date.today()
+    start = end - timedelta(days=6)
+    for u in cfg.get("users", []):
+        chat_id = u.get("chat_id")
+        member = (u.get("name") or "").strip().lower()
+        if not chat_id or not member:
+            continue
+        days = [(start + timedelta(days=i)).isoformat() for i in range(7)]
+        totals = [await get_day_totals(member, d) for d in days]
+        active = [t for t in totals if t["meals"] > 0]
+        if not active:
+            continue
+        avg = round(sum(t["kcal"] for t in active) / len(active))
+        p = await get_profile(member)
+        target = p.get("kcal_target") if p else None
+        txt = f"📊 Report settimanale {u.get('name')}:\nMedia {avg} kcal/giorno ({len(active)} giorni tracciati)."
+        if target:
+            delta = avg - target
+            verso = "sopra" if delta > 0 else "sotto"
+            txt += f"\nObiettivo {target} kcal → {abs(delta)} kcal {verso} di media."
+        try:
+            await _bot.send_message(chat_id=int(chat_id), text=txt)
+        except Exception as e:
+            logger.warning("Invio report settimanale a %s fallito: %s", chat_id, e)
+
+
+def schedule_food_jobs(bot):
+    """Registra job proattivi food_diary. Richiede scheduler già avviato."""
+    global _bot
+    _bot = bot
+    if not _scheduler:
+        logger.warning("Scheduler non avviato: food jobs non registrati.")
+        return
+    _scheduler.add_job(_food_morning, CronTrigger(hour=8, minute=0),
+                       id="food_morning", replace_existing=True)
+    _scheduler.add_job(_food_weekly, CronTrigger(day_of_week="sun", hour=20, minute=0),
+                       id="food_weekly", replace_existing=True)
+    logger.info("Food jobs proattivi registrati (piano 08:00, report dom 20:00).")

@@ -8,6 +8,7 @@ from memory import init_db
 from telegram_handler import build_app
 import scheduler
 import notifier
+import webpanel
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 logging.basicConfig(
@@ -104,8 +105,13 @@ async def main():
 
     notifier.set_bot(app.bot)
 
-    if cfg.get("modules", {}).get("reminders", False):
+    mods = cfg.get("modules", {})
+    if mods.get("reminders", False) or mods.get("food_diary", False):
         await scheduler.start(app.bot)
+    if mods.get("food_diary", False):
+        scheduler.schedule_food_jobs(app.bot)
+
+    web_runner = await webpanel.start()
 
     logger.info("HARIA attiva. In attesa di messaggi.")
 
@@ -123,6 +129,10 @@ async def main():
 
     logger.info("Arresto HARIA...")
     scheduler.shutdown()
+    try:
+        await web_runner.cleanup()
+    except Exception:
+        pass
     await app.updater.stop()
     await app.stop()
     await app.shutdown()

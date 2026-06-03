@@ -6,12 +6,20 @@ macro), così non serve una seconda chiamata API. BMI e fabbisogno calorico
 sono calcolati in Python (deterministici).
 """
 import json
+from datetime import datetime
 from memory import (
     get_profile, upsert_profile, add_weight, get_weight_history,
     add_meal, get_meals, set_plan_meal, get_meal_plan,
+    get_day_totals, add_hydration, get_hydration_day,
+    add_shopping_items, get_shopping_list, check_shopping_item, clear_shopping_list,
 )
+import nutrition
 
 NAME = "food_diary"
+
+
+def _today() -> str:
+    return datetime.now().date().isoformat()
 
 ACTIVITY_FACTORS = {
     "sedentario": 1.2,
@@ -222,6 +230,116 @@ TOOLS = [
             "required": ["date", "meal_type", "items"],
         },
     },
+    {
+        "name": "get_daily_summary",
+        "description": (
+            "Riepilogo nutrizionale giornaliero di un membro: kcal e macro consumati vs fabbisogno (kcal_target), "
+            "calorie rimanenti, idratazione. Usa per 'quanto ho mangiato oggi', 'quante calorie mi restano'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "member": {"type": "string"},
+                "date": {"type": "string", "description": "Giorno YYYY-MM-DD; default oggi"},
+            },
+            "required": ["member"],
+        },
+    },
+    {
+        "name": "log_hydration",
+        "description": "Registra acqua/liquidi bevuti (ml) da un membro. Stima ml se l'utente dice 'un bicchiere' (~250ml) o 'una bottiglia' (~500ml).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "member": {"type": "string"},
+                "ml": {"type": "number", "description": "Millilitri bevuti"},
+            },
+            "required": ["member", "ml"],
+        },
+    },
+    {
+        "name": "get_hydration",
+        "description": "Quanta acqua ha bevuto oggi (o in una data) un membro.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "member": {"type": "string"},
+                "date": {"type": "string", "description": "Giorno YYYY-MM-DD; default oggi"},
+            },
+            "required": ["member"],
+        },
+    },
+    {
+        "name": "lookup_nutrition",
+        "description": (
+            "Cerca valori nutrizionali REALI per 100 g di un alimento da fonti gratuite (OpenFoodFacts/USDA), con cache. "
+            "Usa per avere kcal/macro accurati invece di stimarli a memoria. Restituisce null se nessuna fonte risponde (allora stima tu)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Nome alimento (es. 'petto di pollo', 'banana')"}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "lookup_barcode",
+        "description": "Cerca un prodotto confezionato dal codice a barre (EAN) su OpenFoodFacts: nome, marca, valori per 100 g.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "Codice a barre / EAN"}},
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "add_shopping_items",
+        "description": (
+            "Aggiunge voci alla lista della spesa. Usa per generare la spesa dal piano settimanale: "
+            "GENERA TU gli ingredienti aggregati (quantità per la famiglia) dai pasti pianificati."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "qty": {"type": "string", "description": "Quantità (es. '500 g', '2 pz')"},
+                            "category": {"type": "string", "description": "Reparto (es. verdura, carne, dispensa)"},
+                        },
+                        "required": ["name"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    },
+    {
+        "name": "get_shopping_list",
+        "description": "Leggi la lista della spesa attuale (voci non ancora prese, salvo include_checked).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"include_checked": {"type": "boolean"}},
+        },
+    },
+    {
+        "name": "check_shopping_item",
+        "description": "Segna come preso un articolo della lista spesa (per nome, match parziale).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "clear_shopping_list",
+        "description": "Svuota la lista spesa. only_checked=true rimuove solo gli articoli già presi.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"only_checked": {"type": "boolean"}},
+        },
+    },
 ]
 
 PROMPT = (
@@ -233,6 +351,12 @@ PROMPT = (
     "\n- PIANO SETTIMANALE: per 'cosa si mangia oggi/questa settimana' usa get_meal_plan (calcola le date ISO dalla data attuale)."
     " Se non esiste un piano, proponi di crearlo con plan_week: genera tu un menù vario tenendo conto di profili/dieta/allergie/preferenze della famiglia."
     " Se l'utente vuole cambiare un pasto, PROPONI 2-3 alternative coerenti; quando sceglie, salva con set_plan_meal."
+    "\n- VALORI NUTRIZIONALI: prima di stimare kcal/macro a memoria, prova lookup_nutrition per dati reali (cache locale)."
+    " Per prodotti confezionati col codice a barre usa lookup_barcode. Se la fonte non risponde, stima tu."
+    "\n- RIEPILOGO: per 'quanto ho mangiato/quante calorie restano' usa get_daily_summary. Per l'acqua usa log_hydration/get_hydration."
+    "\n- SPESA: per generare la lista della spesa, leggi il piano (get_meal_plan), GENERA tu gli ingredienti aggregati e salvali con add_shopping_items."
+    " Per consultarla usa get_shopping_list, per spuntare check_shopping_item, per svuotare clear_shopping_list."
+    "\n- CONSIGLI: quando proponi cosa cucinare, tieni conto di profili/obiettivi/allergie e privilegia ricette semplici e veloci; offri sempre alternative."
 )
 
 
@@ -335,5 +459,53 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
             inputs.get("recipe"), inputs.get("servings"),
         )
         return json.dumps({"ok": True, "date": inputs["date"], "meal_type": inputs["meal_type"]}, ensure_ascii=False)
+
+    if name == "get_daily_summary":
+        day = inputs.get("date") or _today()
+        totals = await get_day_totals(member, day)
+        hydr = await get_hydration_day(member, day)
+        p = await get_profile(member)
+        target = p.get("kcal_target") if p else None
+        remaining = round(target - totals["kcal"], 1) if target else None
+        return json.dumps({
+            "member": member, "date": day, "consumed": totals,
+            "kcal_target": target, "kcal_remaining": remaining,
+            "hydration_ml": hydr["ml_total"],
+        }, ensure_ascii=False)
+
+    if name == "log_hydration":
+        res = await add_hydration(member, inputs["ml"])
+        day = _today()
+        hydr = await get_hydration_day(member, day)
+        return json.dumps({"ok": True, "added_ml": inputs["ml"], "today_ml": hydr["ml_total"]}, ensure_ascii=False)
+
+    if name == "get_hydration":
+        day = inputs.get("date") or _today()
+        hydr = await get_hydration_day(member, day)
+        return json.dumps({"member": member, "date": day, "ml_total": hydr["ml_total"]}, ensure_ascii=False)
+
+    if name == "lookup_nutrition":
+        res = await nutrition.lookup_food(inputs["query"])
+        return json.dumps(res, ensure_ascii=False) if res else "null"
+
+    if name == "lookup_barcode":
+        res = await nutrition.lookup_barcode(inputs["code"])
+        return json.dumps(res, ensure_ascii=False) if res else f"Prodotto '{inputs['code']}' non trovato."
+
+    if name == "add_shopping_items":
+        n = await add_shopping_items(inputs.get("items", []))
+        return json.dumps({"ok": True, "added": n}, ensure_ascii=False)
+
+    if name == "get_shopping_list":
+        lst = await get_shopping_list(inputs.get("include_checked", False))
+        return json.dumps(lst, ensure_ascii=False) if lst else "Lista spesa vuota."
+
+    if name == "check_shopping_item":
+        ok = await check_shopping_item(inputs["name"])
+        return json.dumps({"ok": ok, "item": inputs["name"]}, ensure_ascii=False)
+
+    if name == "clear_shopping_list":
+        n = await clear_shopping_list(inputs.get("only_checked", False))
+        return json.dumps({"ok": True, "removed": n}, ensure_ascii=False)
 
     return f"Tool sconosciuto nel modulo {NAME}: {name}"
