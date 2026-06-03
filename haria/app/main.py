@@ -7,6 +7,7 @@ import config as cfg
 from memory import init_db
 from telegram_handler import build_app
 import scheduler
+import notifier
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 logging.basicConfig(
@@ -100,6 +101,8 @@ async def main():
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
+
+    notifier.set_bot(app.bot)
 
     if cfg.get("modules", {}).get("reminders", False):
         await scheduler.start(app.bot)
