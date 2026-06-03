@@ -239,20 +239,20 @@ CREATE TABLE todos (
 ## Step di sviluppo
 
 ### Fase 1 — Core (MVP)
-- [ ] Struttura repo e Dockerfile addon HA
-- [ ] Configurazione yaml e schema
-- [ ] Telegram listener (testo)
-- [ ] Integrazione Claude con tool calling base
-- [ ] Tool `get_house_state` e `control_device` via HA REST API
-- [ ] Memoria conversazionale SQLite
-- [ ] Multi-utente con contesti separati
+- [x] Struttura repo e Dockerfile addon HA
+- [x] Configurazione yaml e schema
+- [x] Telegram listener (testo)
+- [x] Integrazione Claude con tool calling base
+- [x] Tool `get_house_state` e `control_device` via HA REST API
+- [x] Memoria conversazionale SQLite
+- [x] Multi-utente con contesti separati
 - [ ] Deploy e test su HA reale
 
 ### Fase 2 — Voce
-- [ ] Ricezione audio da Telegram (`telegram_voice`)
-- [ ] Download file audio da Telegram API
-- [ ] Trascrizione via Groq Whisper API
-- [ ] Integrazione nel flusso principale
+- [x] Ricezione audio da Telegram (`telegram_voice`)
+- [x] Download file audio da Telegram API
+- [x] Trascrizione via Groq Whisper API
+- [x] Integrazione nel flusso principale
 
 ### Fase 3 — Chat HA
 - [ ] Web panel minimale (HTML/CSS/JS)

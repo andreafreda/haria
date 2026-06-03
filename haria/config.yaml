@@ -1,0 +1,57 @@
+name: "HARIA"
+description: "Home Assistant Reactive Intelligent Agent — AI assistant via Telegram and HA chat"
+version: "0.1.0"
+slug: "haria"
+url: "https://github.com/andreafreda/haria"
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: application
+boot: auto
+init: false
+map:
+  - data
+services:
+  - mqtt:want
+options:
+  anthropic_key: ""
+  telegram_token: ""
+  groq_key: ""
+  ha_url: "http://homeassistant.local:8123"
+  ha_token: ""
+  log_level: "info"
+  modules:
+    telegram: true
+    ha_chat: false
+    voice: true
+    reminders: false
+    todo: false
+    food_diary: false
+    web_search: false
+    multi_user: true
+  users: []
+
+schema:
+  anthropic_key: str
+  telegram_token: str
+  groq_key: str?
+  ha_url: str
+  ha_token: str
+  log_level: list(debug|info|warning|error)?
+  modules:
+    telegram: bool
+    ha_chat: bool
+    voice: bool
+    reminders: bool
+    todo: bool
+    food_diary: bool
+    web_search: bool
+    multi_user: bool
+  users:
+    - name: str
+      chat_id: str
+      context: str?
+      notify_service: str?
