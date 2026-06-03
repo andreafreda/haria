@@ -7,10 +7,8 @@ from ha_client import get_states, call_service
 from memory import (
     get_history, save_turn, get_notes, save_note,
     get_entity_cache, save_entity_cache, clear_entity_cache,
-    add_reminder, get_user_reminders, deactivate_reminder,
 )
-import scheduler
-import web_search
+import modules
 import config as cfg
 
 logger = logging.getLogger(__name__)
@@ -94,63 +92,10 @@ CORE_TOOLS = [
     },
 ]
 
-REMINDER_TOOLS = [
-    {
-        "name": "set_reminder",
-        "description": "Crea un promemoria. Usa remind_at (ISO datetime, es. '2026-06-03T18:30:00') per one-shot, OPPURE recurring (espressione cron a 5 campi 'min hour day month dow', es. '0 9 * * 1' = ogni lunedì 9:00) per ricorrenti. Non entrambi.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "message": {"type": "string", "description": "Testo del promemoria"},
-                "remind_at": {"type": "string", "description": "ISO datetime per promemoria one-shot"},
-                "recurring": {"type": "string", "description": "Espressione cron per promemoria ricorrenti"},
-            },
-            "required": ["message"],
-        },
-    },
-    {
-        "name": "list_reminders",
-        "description": "Elenca i promemoria attivi dell'utente corrente.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "cancel_reminder",
-        "description": "Cancella un promemoria tramite il suo id (ottenuto da list_reminders).",
-        "input_schema": {
-            "type": "object",
-            "properties": {"id": {"type": "integer", "description": "ID del promemoria"}},
-            "required": ["id"],
-        },
-    },
-]
-
-WEB_SEARCH_TOOLS = [
-    {
-        "name": "search_web",
-        "description": "Cerca informazioni aggiornate sul web (notizie, fatti recenti, dati che non conosci). Restituisce titolo, url e snippet dei risultati.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Query di ricerca"},
-                "max_results": {"type": "integer", "description": "Numero risultati (default 5)"},
-            },
-            "required": ["query"],
-        },
-    },
-]
-
-
-def _module_enabled(name: str) -> bool:
-    return bool(cfg.get("modules", {}).get(name, False))
-
-
 def get_tools() -> list[dict]:
-    extra = []
-    if _module_enabled("reminders"):
-        extra += REMINDER_TOOLS
-    if _module_enabled("web_search"):
-        extra += WEB_SEARCH_TOOLS
+    extra = modules.tools()
     if extra:
+        # tool moduli prima del tool 'respond' finale
         return CORE_TOOLS[:-1] + extra + [CORE_TOOLS[-1]]
     return list(CORE_TOOLS)
 
@@ -190,25 +135,6 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
         if name == "save_memory":
             await save_note(user_id, inputs["key"], inputs["value"])
             return f"Nota '{inputs['key']}' salvata."
-        if name == "set_reminder":
-            remind_at = inputs.get("remind_at") or None
-            recurring = inputs.get("recurring") or None
-            if not remind_at and not recurring:
-                return "Errore: specifica remind_at (one-shot) o recurring (cron)."
-            r = await add_reminder(user_id, inputs["message"], remind_at, recurring)
-            if not scheduler.schedule_reminder(r):
-                await deactivate_reminder(r["id"], user_id)
-                return "Errore: orario non valido o nel passato."
-            return f"Promemoria #{r['id']} creato."
-        if name == "list_reminders":
-            rem = await get_user_reminders(user_id)
-            return json.dumps(rem, ensure_ascii=False) if rem else "Nessun promemoria attivo."
-        if name == "cancel_reminder":
-            ok = await deactivate_reminder(int(inputs["id"]), user_id)
-            if ok:
-                scheduler.cancel_job(int(inputs["id"]))
-                return f"Promemoria #{inputs['id']} cancellato."
-            return f"Promemoria #{inputs['id']} non trovato."
         if name == "speak_alexa":
             mp = inputs["media_player"]
             object_id = mp.split(".", 1)[1] if "." in mp else mp
@@ -231,11 +157,11 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
                 {"ok": False, "error": str(last_error), "device": mp},
                 ensure_ascii=False,
             )
-        if name == "search_web":
-            results = await web_search.search(inputs["query"], inputs.get("max_results", 5))
-            return json.dumps(results, ensure_ascii=False) if results else "Nessun risultato."
         if name == "respond":
             return "__respond__"
+        # tool dei moduli abilitati (reminders, web_search, ...)
+        if modules.owns(name):
+            return await modules.dispatch(name, inputs, user_id)
         return f"Tool sconosciuto: {name}"
     except (ConnectionError, PermissionError, TimeoutError) as e:
         logger.warning("Tool %s fallito: %s", name, e)
@@ -262,15 +188,7 @@ async def _build_system(user_config: dict) -> list[dict]:
         "- Per far PARLARE ad alta voce un Echo/Alexa usa speak_alexa con l'entity_id del media_player (es. media_player.echo_show_cucina). NON usare control_device per gli annunci vocali.\n"
         "- Rispondi in italiano, in modo conciso."
     )
-    if _module_enabled("reminders"):
-        base += (
-            "\n- Per promemoria usa set_reminder: calcola remind_at (ISO datetime) dalla data/ora attuale nel blocco volatile."
-            " Per ricorrenti usa recurring (cron 5 campi). Usa list_reminders/cancel_reminder per gestirli."
-        )
-    if _module_enabled("web_search"):
-        base += (
-            "\n- Per informazioni aggiornate o che non conosci (notizie, eventi recenti, dati attuali) usa search_web, poi rispondi citando le fonti."
-        )
+    base += modules.prompt()
 
     cached = await get_entity_cache()
     if not cached:
