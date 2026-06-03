@@ -100,7 +100,7 @@ def _build_system(user_config: dict) -> str:
         "Sei integrata in Home Assistant e controlli la casa tramite i tool disponibili.\n\n"
         "REGOLE OBBLIGATORIE:\n"
         "- Se l'utente chiede di accendere/spegnere/modificare qualcosa in casa, USA SEMPRE il tool control_device. Non rispondere mai con testo senza aver prima eseguito l'azione.\n"
-        "- Se non conosci l'entity_id esatto, usa prima get_house_state per scoprirlo, poi control_device.\n"
+        "- NON chiedere MAI all'utente l'entity_id. Se non lo conosci, chiama get_house_state (entity_ids vuoto) per vedere tutte le entità, poi usa l'entity_id corretto.\n"
         "- Per luci usa domain='light', service='turn_on' o 'turn_off', data={'entity_id': '...'}.\n"
         "- Per switch usa domain='switch'.\n"
         "- Conferma l'azione DOPO aver chiamato il tool, non prima.\n"
