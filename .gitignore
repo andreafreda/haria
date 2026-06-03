@@ -1,0 +1,8 @@
+test_options.json
+test.db
+test_stdout.txt
+test_stderr.txt
+__pycache__/
+*.pyc
+*.pyo
+.env

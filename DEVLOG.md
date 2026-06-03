@@ -81,11 +81,40 @@ Decisioni tecniche, file creati, note implementative. Aggiornato a ogni sessione
 | `log_meal` | ❌ Fase 4 |
 | `search_web` | ❌ Fase 4 |
 
+### Bug risolti
+
+- `add_signal_handler` non supportato su Windows → sostituito con `signal.signal` + `loop.call_soon_threadsafe`
+
 ### Ancora da fare
 
-- [ ] Deploy e test su HA reale
+- [ ] Deploy su HA reale come addon Docker
 - [ ] Verifica bashio disponibile nell'immagine base
 - [ ] Test multi-utente con due chat_id diversi
+
+---
+
+## 2026-06-03 — Test locali superati
+
+### Risultati
+
+| Test | Risultato |
+|---|---|
+| `memory.py` — init DB, save/get history, save/get notes | ✅ |
+| `ha_client.py` — errore 401 gestito | ✅ |
+| `ha_client.py` — get_states reale (1028 entità) | ✅ |
+| `claude_engine` — risposta semplice | ✅ |
+| `claude_engine` — tool calling get_house_state | ✅ (luci, temperature, persone a casa) |
+| `claude_engine` — save_memory + get_memory | ✅ |
+| `main.py` — avvio bot, webhook HA sospeso | ✅ |
+| `main.py` — polling Telegram attivo | ✅ |
+| Messaggio reale Telegram → Claude → risposta | ✅ |
+| Tool calling su messaggio reale (2 chiamate API Claude) | ✅ |
+| Webhook HA ripristinato dopo stop | ✅ |
+
+### Note
+
+- Webhook HA trovato su `https://ha.freda.cloud/api/telegram_webhooks_8790515346` — acquisito e ripristinato correttamente
+- `test_options.json` usato per test locali — **non committato** (contiene credenziali)
 
 ---
 
