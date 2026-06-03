@@ -1,5 +1,4 @@
 import logging
-import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from claude_engine import chat, refresh_entity_cache
@@ -81,7 +80,7 @@ async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id not in users:
         return
 
-    groq_key = os.environ.get("GROQ_API_KEY", "")
+    groq_key = cfg.get("groq_key", "")
     if not groq_key:
         await update.message.reply_text("Trascrizione vocale non configurata (groq_key mancante).")
         return
