@@ -1,0 +1,5 @@
+{
+  "project": "HARIA — Home Assistant Reactive Intelligent Agent",
+  "description": "HA addon custom — Claude + Telegram + Groq Whisper",
+  "repo": "https://github.com/andreafreda/haria"
+}
