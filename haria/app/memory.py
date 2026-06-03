@@ -82,6 +82,16 @@ async def init_db():
                 carbs_g REAL,
                 fat_g REAL
             );
+            CREATE TABLE IF NOT EXISTS meal_plan (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                meal_type TEXT NOT NULL,
+                items TEXT NOT NULL,
+                recipe TEXT,
+                servings INTEGER,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(date, meal_type)
+            );
         """)
         await db.commit()
 
@@ -326,5 +336,36 @@ async def get_meals(member: str, date_from: str | None = None, date_to: str | No
     return [
         {"id": r[0], "meal_type": r[1], "description": r[2], "kcal_total": r[3],
          "protein_g": r[4], "carbs_g": r[5], "fat_g": r[6], "eaten_at": r[7]}
+        for r in rows
+    ]
+
+
+# ---- food_diary: piano settimanale ----
+
+async def set_plan_meal(date: str, meal_type: str, items: str,
+                        recipe: str | None = None, servings: int | None = None):
+    """Inserisce o sostituisce un pasto del piano (chiave date+meal_type)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO meal_plan (date, meal_type, items, recipe, servings, updated_at)
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(date, meal_type) DO UPDATE SET
+                 items=excluded.items, recipe=excluded.recipe,
+                 servings=excluded.servings, updated_at=CURRENT_TIMESTAMP""",
+            (date, meal_type, items, recipe, servings),
+        )
+        await db.commit()
+
+
+async def get_meal_plan(date_from: str, date_to: str) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT date, meal_type, items, recipe, servings FROM meal_plan
+               WHERE date >= ? AND date <= ? ORDER BY date, meal_type""",
+            (date_from, date_to),
+        )
+        rows = await cursor.fetchall()
+    return [
+        {"date": r[0], "meal_type": r[1], "items": r[2], "recipe": r[3], "servings": r[4]}
         for r in rows
     ]

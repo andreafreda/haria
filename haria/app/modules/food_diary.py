@@ -8,7 +8,7 @@ sono calcolati in Python (deterministici).
 import json
 from memory import (
     get_profile, upsert_profile, add_weight, get_weight_history,
-    add_meal, get_meals,
+    add_meal, get_meals, set_plan_meal, get_meal_plan,
 )
 
 NAME = "food_diary"
@@ -166,6 +166,62 @@ TOOLS = [
             "required": ["member"],
         },
     },
+    {
+        "name": "plan_week",
+        "description": (
+            "Crea o rigenera il piano pasti settimanale della famiglia. GENERA TU il menù tenendo conto di "
+            "profili, obiettivi dieta, allergie, preferenze e varietà (no ripetizioni). Fornisci una voce per "
+            "ogni pasto pianificato con data ISO (YYYY-MM-DD), tipo pasto e portate."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "meals": {
+                    "type": "array",
+                    "description": "Pasti del piano settimanale",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "date": {"type": "string", "description": "Data ISO YYYY-MM-DD"},
+                            "meal_type": {"type": "string", "enum": ["colazione", "pranzo", "cena", "snack"]},
+                            "items": {"type": "string", "description": "Cosa si mangia (portate)"},
+                            "recipe": {"type": "string", "description": "Ricetta breve opzionale"},
+                            "servings": {"type": "integer", "description": "Numero porzioni/persone"},
+                        },
+                        "required": ["date", "meal_type", "items"],
+                    },
+                },
+            },
+            "required": ["meals"],
+        },
+    },
+    {
+        "name": "get_meal_plan",
+        "description": "Leggi il piano pasti in un intervallo di date ISO (YYYY-MM-DD). Usa per 'cosa si mangia oggi/questa settimana'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date_from": {"type": "string", "description": "Data ISO inizio (YYYY-MM-DD)"},
+                "date_to": {"type": "string", "description": "Data ISO fine (YYYY-MM-DD)"},
+            },
+            "required": ["date_from", "date_to"],
+        },
+    },
+    {
+        "name": "set_plan_meal",
+        "description": "Fissa o sostituisce UN pasto nel piano (es. dopo che l'utente sceglie un'alternativa). Sovrascrive il pasto esistente per quella data+tipo.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "description": "Data ISO YYYY-MM-DD"},
+                "meal_type": {"type": "string", "enum": ["colazione", "pranzo", "cena", "snack"]},
+                "items": {"type": "string", "description": "Cosa si mangia"},
+                "recipe": {"type": "string"},
+                "servings": {"type": "integer"},
+            },
+            "required": ["date", "meal_type", "items"],
+        },
+    },
 ]
 
 PROMPT = (
@@ -174,6 +230,9 @@ PROMPT = (
     " Se l'utente non indica il membro, usa il nome dell'utente corrente come 'member'."
     " Un utente può registrare per un altro membro (es. la bimba): in tal caso usa il nome del membro indicato."
     " Per query storiche usa get_meals/get_weight_history."
+    "\n- PIANO SETTIMANALE: per 'cosa si mangia oggi/questa settimana' usa get_meal_plan (calcola le date ISO dalla data attuale)."
+    " Se non esiste un piano, proponi di crearlo con plan_week: genera tu un menù vario tenendo conto di profili/dieta/allergie/preferenze della famiglia."
+    " Se l'utente vuole cambiare un pasto, PROPONI 2-3 alternative coerenti; quando sceglie, salva con set_plan_meal."
 )
 
 
@@ -254,5 +313,27 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
     if name == "get_meals":
         meals = await get_meals(member, inputs.get("date_from"), inputs.get("date_to"))
         return json.dumps(meals, ensure_ascii=False) if meals else f"Nessun pasto registrato per '{member}'."
+
+    if name == "plan_week":
+        meals = inputs.get("meals", [])
+        if not meals:
+            return "Errore: nessun pasto fornito per il piano."
+        for m in meals:
+            await set_plan_meal(
+                m["date"], m["meal_type"], m["items"],
+                m.get("recipe"), m.get("servings"),
+            )
+        return json.dumps({"ok": True, "count": len(meals)}, ensure_ascii=False)
+
+    if name == "get_meal_plan":
+        plan = await get_meal_plan(inputs["date_from"], inputs["date_to"])
+        return json.dumps(plan, ensure_ascii=False) if plan else "Nessun piano per le date richieste."
+
+    if name == "set_plan_meal":
+        await set_plan_meal(
+            inputs["date"], inputs["meal_type"], inputs["items"],
+            inputs.get("recipe"), inputs.get("servings"),
+        )
+        return json.dumps({"ok": True, "date": inputs["date"], "meal_type": inputs["meal_type"]}, ensure_ascii=False)
 
     return f"Tool sconosciuto nel modulo {NAME}: {name}"
