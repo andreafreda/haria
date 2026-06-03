@@ -8,7 +8,7 @@ from memory import get_history, save_turn, get_notes, save_note
 logger = logging.getLogger(__name__)
 
 client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-MODEL = "claude-haiku-3-5-20241022"
+MODEL = "claude-haiku-4-5-20251001"
 
 TOOLS = [
     {

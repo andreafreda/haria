@@ -100,14 +100,20 @@ Decisioni tecniche, file creati, note implementative. Aggiornato a ogni sessione
 | Utente Andrea | chat_id `210413540`, notify `notify.mobile_app_rmx3301` |
 | Utente Marina | chat_id `799761342`, notify `notify.mobile_app_sm_s911b` |
 
-### ⚠️ Conflitto Telegram
+### Telegram bot handover (automatico)
 
-HA ha già integrazione Telegram configurata (bot "Casa") con webhook attivo. **Prima di avviare HARIA bisogna disattivarla** — due listener sullo stesso bot token causano conflitto e messaggi persi.
+HARIA gestisce il conflitto col bot HA in modo automatico e non distruttivo:
 
-Passi da fare prima del deploy:
-1. Disattivare integrazione Telegram in HA (`Impostazioni → Integrazioni → Telegram`)
-2. Avviare HARIA addon
-3. HARIA prende il controllo esclusivo del bot token
+**All'avvio (`_acquire_bot`)**:
+1. Legge webhook esistente con `getWebhookInfo` e lo salva in memoria
+2. Cancella webhook con `deleteWebhook` (senza droppare i messaggi pendenti)
+3. Avvia polling — HARIA prende controllo esclusivo del bot
+
+**Allo stop (`_release_bot`)**:
+1. Se c'era un webhook precedente, lo ripristina con `setWebhook` (incluso `secret_token` se presente)
+2. L'integrazione HA Telegram riprende normalmente al prossimo restart
+
+**Risultato**: nessuna modifica manuale necessaria. Se HARIA non parte, il webhook HA resta intatto.
 
 ---
 
