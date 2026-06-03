@@ -4,15 +4,7 @@ FROM $BUILD_FROM
 ENV LANG C.UTF-8
 ENV PYTHONUNBUFFERED=1
 
-# Install Python deps
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    python3-dev \
-    build-base \
-    libffi-dev \
-    openssl-dev \
-    sqlite
+RUN apk add --no-cache build-base libffi-dev openssl-dev sqlite
 
 WORKDIR /app
 
@@ -21,7 +13,6 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY app/ ./
 
-# Data directory for SQLite
 RUN mkdir -p /data
 
 COPY run.sh /
