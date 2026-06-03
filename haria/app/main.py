@@ -101,14 +101,14 @@ async def main():
     logger.info("HARIA attiva. In attesa di messaggi.")
 
     stop_event = asyncio.Event()
-
-    def _handle_signal():
-        logger.info("Segnale di stop ricevuto.")
-        stop_event.set()
-
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _handle_signal)
+
+    def _handle_signal(signum, frame):
+        logger.info("Segnale di stop ricevuto (%s).", signum)
+        loop.call_soon_threadsafe(stop_event.set)
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
 
     await stop_event.wait()
 
