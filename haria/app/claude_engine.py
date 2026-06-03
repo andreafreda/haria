@@ -1,6 +1,7 @@
 import json
 import logging
 import anthropic
+from anthropic import RateLimitError
 from ha_client import get_states, call_service
 from memory import get_history, save_turn, get_notes, save_note
 import config as cfg
@@ -107,31 +108,38 @@ async def chat(user_id: str, user_text: str, user_config: dict) -> str:
     messages = history + [{"role": "user", "content": user_text}]
     system = _build_system(user_config)
 
-    while True:
-        response = await client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            system=system,
-            tools=TOOLS,
-            messages=messages,
-        )
+    try:
+        while True:
+            response = await client.messages.create(
+                model=MODEL,
+                max_tokens=1024,
+                system=system,
+                tools=TOOLS,
+                messages=messages,
+            )
 
-        if response.stop_reason == "tool_use":
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = await _run_tool(block.name, block.input, user_id)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        result = await _run_tool(block.name, block.input, user_id)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                        })
 
-            messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": tool_results})
-            continue
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": tool_results})
+                continue
 
-        text_blocks = [b.text for b in response.content if hasattr(b, "text")]
-        reply = "\n".join(text_blocks)
-        await save_turn(user_id, "assistant", reply)
-        return reply
+            text_blocks = [b.text for b in response.content if hasattr(b, "text")]
+            reply = "\n".join(text_blocks)
+            await save_turn(user_id, "assistant", reply)
+            return reply
+    except RateLimitError:
+        logger.warning("Rate limit Anthropic raggiunto per user %s", user_id)
+        return "⚠️ Troppe richieste in poco tempo. Riprova tra un minuto."
+    except anthropic.APIError as e:
+        logger.error("Errore API Anthropic: %s", e)
+        return "Errore di comunicazione con l'AI. Riprova."
