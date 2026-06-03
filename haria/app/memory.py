@@ -1,7 +1,7 @@
 import aiosqlite
 import os
 
-DB_PATH = os.environ.get("DB_PATH", "/data/haria.db")
+DB_PATH = os.environ.get("DB_PATH", "/config/haria.db")
 MAX_HISTORY = 20
 
 
@@ -45,6 +45,12 @@ async def save_turn(user_id: str, role: str, content: str):
             "INSERT INTO conversations (user_id, role, content) VALUES (?, ?, ?)",
             (user_id, role, content),
         )
+        await db.commit()
+
+
+async def clear_history(user_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
         await db.commit()
 
 

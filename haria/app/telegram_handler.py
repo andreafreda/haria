@@ -3,6 +3,7 @@ import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from claude_engine import chat
+from memory import clear_history
 import config as cfg
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,16 @@ async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Ciao {name}! Sono HARIA, il tuo assistente AI. Scrivimi o mandami un vocale."
     )
+
+
+async def _handle_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    chat_id = str(update.effective_chat.id)
+    if chat_id not in _load_users():
+        return
+    await clear_history(chat_id)
+    await update.message.reply_text("Memoria conversazione cancellata.")
 
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,6 +103,7 @@ async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_app(token: str):
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", _handle_start))
+    app.add_handler(CommandHandler("reset", _handle_reset))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
     app.add_handler(MessageHandler(filters.VOICE, _handle_voice))
     return app
