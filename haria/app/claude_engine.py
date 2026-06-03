@@ -62,6 +62,17 @@ TOOLS = [
             "required": ["key", "value"],
         },
     },
+    {
+        "name": "respond",
+        "description": "Rispondi all'utente con un messaggio di testo. Usa questo tool per tutte le risposte.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Il testo della risposta per l'utente."},
+            },
+            "required": ["text"],
+        },
+    },
 ]
 
 
@@ -83,6 +94,8 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
         if name == "save_memory":
             await save_note(user_id, inputs["key"], inputs["value"])
             return f"Nota '{inputs['key']}' salvata."
+        if name == "respond":
+            return "__respond__"
         return f"Tool sconosciuto: {name}"
     except (ConnectionError, PermissionError, TimeoutError) as e:
         logger.warning("Tool %s fallito: %s", name, e)
@@ -99,11 +112,11 @@ def _build_system(user_config: dict) -> str:
         f"Sei HARIA, assistente AI personale di {name}. "
         "Sei integrata in Home Assistant e controlli la casa tramite i tool disponibili.\n\n"
         "REGOLE OBBLIGATORIE:\n"
-        "- Se l'utente chiede di accendere/spegnere/modificare qualcosa in casa, USA SEMPRE il tool control_device. Non rispondere mai con testo senza aver prima eseguito l'azione.\n"
-        "- NON chiedere MAI all'utente l'entity_id. Se non lo conosci, chiama get_house_state (entity_ids vuoto) per vedere tutte le entità, poi usa l'entity_id corretto.\n"
+        "- Devi SEMPRE usare il tool 'respond' per rispondere all'utente. Non puoi rispondere con testo libero.\n"
+        "- Se l'utente chiede di controllare qualcosa in casa, chiama PRIMA control_device (o get_house_state se non conosci l'entity_id), POI respond.\n"
+        "- NON chiedere MAI all'utente l'entity_id. Usa get_house_state (entity_ids vuoto) per scoprirlo.\n"
         "- Per luci usa domain='light', service='turn_on' o 'turn_off', data={'entity_id': '...'}.\n"
         "- Per switch usa domain='switch'.\n"
-        "- Conferma l'azione DOPO aver chiamato il tool, non prima.\n"
         "- Rispondi in italiano, in modo conciso."
     )
     if context:
@@ -125,13 +138,18 @@ async def chat(user_id: str, user_text: str, user_config: dict) -> str:
                 max_tokens=1024,
                 system=system,
                 tools=TOOLS,
+                tool_choice={"type": "any"},
                 messages=messages,
             )
 
-            if response.stop_reason == "tool_use":
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
+            tool_results = []
+            reply = None
+
+            for block in response.content:
+                if block.type == "tool_use":
+                    if block.name == "respond":
+                        reply = block.input.get("text", "")
+                    else:
                         result = await _run_tool(block.name, block.input, user_id)
                         tool_results.append({
                             "type": "tool_result",
@@ -139,14 +157,21 @@ async def chat(user_id: str, user_text: str, user_config: dict) -> str:
                             "content": result,
                         })
 
+            if reply is not None:
+                await save_turn(user_id, "assistant", reply)
+                return reply
+
+            if tool_results:
                 messages.append({"role": "assistant", "content": response.content})
                 messages.append({"role": "user", "content": tool_results})
                 continue
 
+            # fallback: estrai testo se presente
             text_blocks = [b.text for b in response.content if hasattr(b, "text")]
             reply = "\n".join(text_blocks)
             await save_turn(user_id, "assistant", reply)
             return reply
+
     except RateLimitError:
         logger.warning("Rate limit Anthropic raggiunto per user %s", user_id)
         return "⚠️ Troppe richieste in poco tempo. Riprova tra un minuto."
