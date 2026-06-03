@@ -70,6 +70,18 @@ CORE_TOOLS = [
         },
     },
     {
+        "name": "speak_alexa",
+        "description": "Fai parlare ad alta voce un dispositivo Alexa/Echo (annuncio vocale TTS). Usa l'entity_id del media_player Echo (es. media_player.echo_show_cucina), che trovi nella lista entità.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "media_player": {"type": "string", "description": "entity_id del media_player Echo (es. media_player.echo_show_cucina)"},
+                "message": {"type": "string", "description": "Testo da pronunciare"},
+            },
+            "required": ["media_player", "message"],
+        },
+    },
+    {
         "name": "respond",
         "description": "Rispondi all'utente con un messaggio di testo. Usa questo tool per tutte le risposte.",
         "input_schema": {
@@ -197,6 +209,15 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
                 scheduler.cancel_job(int(inputs["id"]))
                 return f"Promemoria #{inputs['id']} cancellato."
             return f"Promemoria #{inputs['id']} non trovato."
+        if name == "speak_alexa":
+            mp = inputs["media_player"]
+            object_id = mp.split(".", 1)[1] if "." in mp else mp
+            notify_service = f"alexa_media_{object_id}"
+            result = await call_service("notify", notify_service, {
+                "message": inputs["message"],
+                "data": {"type": "announce"},
+            })
+            return json.dumps(result, ensure_ascii=False)
         if name == "search_web":
             results = await web_search.search(inputs["query"], inputs.get("max_results", 5))
             return json.dumps(results, ensure_ascii=False) if results else "Nessun risultato."
@@ -225,6 +246,7 @@ async def _build_system(user_config: dict) -> list[dict]:
         "- NON chiedere MAI all'utente l'entity_id.\n"
         "- Per luci usa domain='light', service='turn_on' o 'turn_off', data={'entity_id': '...'}.\n"
         "- Per switch usa domain='switch'.\n"
+        "- Per far PARLARE ad alta voce un Echo/Alexa usa speak_alexa con l'entity_id del media_player (es. media_player.echo_show_cucina). NON usare control_device per gli annunci vocali.\n"
         "- Rispondi in italiano, in modo conciso."
     )
     if _module_enabled("reminders"):
