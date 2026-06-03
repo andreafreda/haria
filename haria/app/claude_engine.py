@@ -10,6 +10,7 @@ from memory import (
     add_reminder, get_user_reminders, deactivate_reminder,
 )
 import scheduler
+import web_search
 import config as cfg
 
 logger = logging.getLogger(__name__)
@@ -111,15 +112,35 @@ REMINDER_TOOLS = [
     },
 ]
 
+WEB_SEARCH_TOOLS = [
+    {
+        "name": "search_web",
+        "description": "Cerca informazioni aggiornate sul web (notizie, fatti recenti, dati che non conosci). Restituisce titolo, url e snippet dei risultati.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Query di ricerca"},
+                "max_results": {"type": "integer", "description": "Numero risultati (default 5)"},
+            },
+            "required": ["query"],
+        },
+    },
+]
+
+
 def _module_enabled(name: str) -> bool:
     return bool(cfg.get("modules", {}).get(name, False))
 
 
 def get_tools() -> list[dict]:
-    tools = list(CORE_TOOLS)
+    extra = []
     if _module_enabled("reminders"):
-        tools = tools[:-1] + REMINDER_TOOLS + [tools[-1]]
-    return tools
+        extra += REMINDER_TOOLS
+    if _module_enabled("web_search"):
+        extra += WEB_SEARCH_TOOLS
+    if extra:
+        return CORE_TOOLS[:-1] + extra + [CORE_TOOLS[-1]]
+    return list(CORE_TOOLS)
 
 
 async def refresh_entity_cache() -> int:
@@ -176,6 +197,9 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
                 scheduler.cancel_job(int(inputs["id"]))
                 return f"Promemoria #{inputs['id']} cancellato."
             return f"Promemoria #{inputs['id']} non trovato."
+        if name == "search_web":
+            results = await web_search.search(inputs["query"], inputs.get("max_results", 5))
+            return json.dumps(results, ensure_ascii=False) if results else "Nessun risultato."
         if name == "respond":
             return "__respond__"
         return f"Tool sconosciuto: {name}"
@@ -207,6 +231,10 @@ async def _build_system(user_config: dict) -> list[dict]:
         base += (
             "\n- Per promemoria usa set_reminder: calcola remind_at (ISO datetime) dalla data/ora attuale nel blocco volatile."
             " Per ricorrenti usa recurring (cron 5 campi). Usa list_reminders/cancel_reminder per gestirli."
+        )
+    if _module_enabled("web_search"):
+        base += (
+            "\n- Per informazioni aggiornate o che non conosci (notizie, eventi recenti, dati attuali) usa search_web, poi rispondi citando le fonti."
         )
 
     cached = await get_entity_cache()
