@@ -37,6 +37,51 @@ async def init_db():
                 active INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS diet_profiles (
+                member TEXT PRIMARY KEY,
+                sex TEXT,
+                age INTEGER,
+                height_cm REAL,
+                weight_kg REAL,
+                goal TEXT,
+                activity_level TEXT,
+                kcal_target INTEGER,
+                bmi REAL,
+                allergies TEXT,
+                preferences TEXT,
+                restrictions TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS weight_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member TEXT NOT NULL,
+                weight_kg REAL NOT NULL,
+                bmi REAL,
+                logged_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS meals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member TEXT NOT NULL,
+                meal_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                kcal_total REAL,
+                protein_g REAL,
+                carbs_g REAL,
+                fat_g REAL,
+                eaten_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                logged_by TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS meal_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meal_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                grams REAL,
+                kcal REAL,
+                protein_g REAL,
+                carbs_g REAL,
+                fat_g REAL
+            );
         """)
         await db.commit()
 
@@ -165,3 +210,121 @@ async def deactivate_reminder(reminder_id: int, user_id: str | None = None) -> b
             )
         await db.commit()
         return cursor.rowcount > 0
+
+
+# ---- food_diary: profili ----
+
+_PROFILE_FIELDS = (
+    "member", "sex", "age", "height_cm", "weight_kg", "goal",
+    "activity_level", "kcal_target", "bmi", "allergies", "preferences", "restrictions",
+)
+
+
+def _profile_row(r) -> dict:
+    return dict(zip(_PROFILE_FIELDS, r))
+
+
+async def get_profile(member: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT member, sex, age, height_cm, weight_kg, goal, activity_level,
+                      kcal_target, bmi, allergies, preferences, restrictions
+               FROM diet_profiles WHERE member = ?""",
+            (member,),
+        )
+        row = await cursor.fetchone()
+    return _profile_row(row) if row else None
+
+
+async def upsert_profile(member: str, fields: dict):
+    """Inserisce o aggiorna un profilo. Solo i campi presenti in `fields` vengono toccati."""
+    cols = [k for k in fields if k in _PROFILE_FIELDS and k != "member"]
+    async with aiosqlite.connect(DB_PATH) as db:
+        exists = await (await db.execute(
+            "SELECT 1 FROM diet_profiles WHERE member = ?", (member,)
+        )).fetchone()
+        if exists:
+            if cols:
+                sets = ", ".join(f"{c} = ?" for c in cols) + ", updated_at = CURRENT_TIMESTAMP"
+                await db.execute(
+                    f"UPDATE diet_profiles SET {sets} WHERE member = ?",
+                    [fields[c] for c in cols] + [member],
+                )
+        else:
+            allcols = ["member"] + cols
+            placeholders = ", ".join("?" for _ in allcols)
+            await db.execute(
+                f"INSERT INTO diet_profiles ({', '.join(allcols)}) VALUES ({placeholders})",
+                [member] + [fields[c] for c in cols],
+            )
+        await db.commit()
+
+
+# ---- food_diary: peso ----
+
+async def add_weight(member: str, weight_kg: float, bmi: float | None) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO weight_log (member, weight_kg, bmi) VALUES (?, ?, ?)",
+            (member, weight_kg, bmi),
+        )
+        await db.commit()
+        wid = cursor.lastrowid
+    return {"id": wid, "member": member, "weight_kg": weight_kg, "bmi": bmi}
+
+
+async def get_weight_history(member: str, limit: int = 20) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT weight_kg, bmi, logged_at FROM weight_log
+               WHERE member = ? ORDER BY logged_at DESC LIMIT ?""",
+            (member, limit),
+        )
+        rows = await cursor.fetchall()
+    return [{"weight_kg": w, "bmi": b, "logged_at": t} for w, b, t in rows]
+
+
+# ---- food_diary: pasti ----
+
+async def add_meal(member: str, meal_type: str, description: str, totals: dict,
+                   items: list[dict], eaten_at: str | None, logged_by: str | None) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO meals
+               (member, meal_type, description, kcal_total, protein_g, carbs_g, fat_g, eaten_at, logged_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)""",
+            (member, meal_type, description,
+             totals.get("kcal_total"), totals.get("protein_g"),
+             totals.get("carbs_g"), totals.get("fat_g"), eaten_at, logged_by),
+        )
+        meal_id = cursor.lastrowid
+        for it in items or []:
+            await db.execute(
+                """INSERT INTO meal_items (meal_id, name, grams, kcal, protein_g, carbs_g, fat_g)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (meal_id, it.get("name"), it.get("grams"), it.get("kcal"),
+                 it.get("protein_g"), it.get("carbs_g"), it.get("fat_g")),
+            )
+        await db.commit()
+    return {"id": meal_id, "member": member, "meal_type": meal_type}
+
+
+async def get_meals(member: str, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    q = ("SELECT id, meal_type, description, kcal_total, protein_g, carbs_g, fat_g, eaten_at "
+         "FROM meals WHERE member = ?")
+    params: list = [member]
+    if date_from:
+        q += " AND eaten_at >= ?"
+        params.append(date_from)
+    if date_to:
+        q += " AND eaten_at <= ?"
+        params.append(date_to)
+    q += " ORDER BY eaten_at DESC LIMIT 50"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(q, params)
+        rows = await cursor.fetchall()
+    return [
+        {"id": r[0], "meal_type": r[1], "description": r[2], "kcal_total": r[3],
+         "protein_g": r[4], "carbs_g": r[5], "fat_g": r[6], "eaten_at": r[7]}
+        for r in rows
+    ]

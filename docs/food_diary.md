@@ -2,6 +2,15 @@
 
 Modulo `food_diary`. Va oltre il semplice log: diario + pianificazione + dieta per tutta la famiglia, con consigli su cosa cucinare e spesa semplificata.
 
+## Obiettivo principale
+
+La settimana è **già organizzata in anticipo**: chiedi "cosa si mangia oggi?" e HARIA risponde dal piano. Volendo si può **variare** — HARIA propone **alternative** coerenti (dieta, allergie, gusti, cosa c'è in casa). Tutto orientato a **semplificare**: meno decisioni, niente "cosa cucino?" a vuoto.
+
+Flusso tipo:
+- "cosa si mangia oggi?" → "Pranzo: pasta al pomodoro. Cena: pollo e insalata." (dal piano)
+- "non mi va il pollo" → "Alternative: frittata, salmone al forno, o legumi. Quale?"
+- scelta → aggiorna il piano + (opzionale) lista spesa
+
 ## Membri famiglia
 
 Riusa `users[]` esistente (name + chat_id). Ogni membro ha un profilo nutrizionale:
@@ -9,13 +18,30 @@ Riusa `users[]` esistente (name + chat_id). Ogni membro ha un profilo nutriziona
 - Andrea, Marina, bimba (e altri futuri)
 - Profilo per membro: età, peso, obiettivi (mantenere/dimagrire), allergie/intolleranze, preferenze (ama/odia), restrizioni (es. cibi per bimba)
 
+## Membri e permessi
+
+- Ogni membro ha un proprio diario e profilo.
+- **Cross-user**: un membro può aggiornare il diario di un altro (es. genitore logga pasti/peso della bimba o di Marina). HARIA capisce il destinatario dal messaggio ("Marina ha mangiato...", "la bimba pesa 14kg"); default = chi scrive.
+- Membri senza chat_id Telegram (es. bimba) esistono solo come profilo, gestiti dai genitori.
+
 ## Feature
+
+### Fase 0 — Onboarding / init profilo
+
+Setup iniziale dati personali, una tantum per membro (modificabile dopo).
+
+- [ ] Comando `/setup` o frase ("imposta il mio profilo") avvia onboarding guidato
+- [ ] HARIA chiede e salva: nome, sesso, data nascita/età, altezza, peso attuale, obiettivo (mantenere/dimagrire/aumentare), livello attività, allergie/intolleranze, preferenze (ama/odia), restrizioni
+- [ ] Crea profili anche per membri senza Telegram (bimba): un genitore li imposta
+- [ ] Da peso+altezza calcola subito BMI e fabbisogno calorico (kcal_target)
+- [ ] Profilo aggiornabile in qualsiasi momento ("aggiorna il mio peso a 77kg", "cambia obiettivo a dimagrire")
+- [ ] Stato profilo: HARIA avvisa se mancano dati chiave prima di stime nutrizionali
 
 ### Fase 1 — Log pasti (base)
 
 - [ ] Log pasto via Telegram, testo o vocale ("ho mangiato pasta al pomodoro")
 - [ ] HARIA struttura: membro, tipo pasto (colazione/pranzo/cena/snack), alimenti, porzione, data/ora
-- [ ] Multi-utente: ogni membro logga i propri pasti; bimba loggata da un genitore
+- [ ] Multi-utente + cross-user: ogni membro logga i propri pasti; un genitore può loggare per la bimba o altri ("Marina ha mangiato...", default = chi scrive)
 - [ ] Query: "cosa ho mangiato oggi?", "cosa ha mangiato la bimba ieri?"
 - [ ] Storage SQLite (nuova tabella `meals`)
 
@@ -138,12 +164,16 @@ food_db(id, name, barcode, kcal_per_100g, protein, carbs, fat, fiber, sugar, sat
 
 ## Tool Claude (bozza)
 
-- `log_meal(user, meal_type, description)` — registra pasto, HARIA struttura + stima
-- `get_meals(user?, date_range)` — query storico
-- `set_diet_profile(user, ...)` — imposta/aggiorna profilo
-- `plan_week(constraints?)` — genera piano settimanale
-- `get_meal_plan(date_range)` — leggi piano
-- `suggest_meal(meal_type, context?)` — cosa cucinare ora
+Nota: ogni tool ha `member` opzionale (cross-user); default = chi scrive. HARIA risolve il nome dal messaggio.
+
+- `set_diet_profile(member?, age, sex, height_cm, weight_kg, goal, activity_level, allergies, preferences, restrictions)` — onboarding/aggiornamento profilo; calcola BMI + kcal_target
+- `log_weight(member?, weight_kg)` — registra peso, aggiorna BMI/trend
+- `log_meal(member?, meal_type, description)` — registra pasto, HARIA struttura + stima nutrizionale
+- `get_meals(member?, date_range)` — query storico pasti
+- `plan_week(constraints?)` — genera/rigenera piano settimanale famiglia
+- `get_meal_plan(date_range)` — leggi piano ("cosa si mangia oggi?")
+- `suggest_alternatives(date, meal_type, reason?)` — proponi alternative a un pasto pianificato ("non mi va il pollo")
+- `set_plan_meal(date, meal_type, items)` — fissa/sostituisci un pasto nel piano (dopo scelta alternativa)
 - `generate_shopping_list(date_range)` — lista spesa dal piano
 
 ## Decisioni aperte
