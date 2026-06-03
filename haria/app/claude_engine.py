@@ -1,9 +1,15 @@
 import json
 import logging
+from datetime import datetime
 import anthropic
 from anthropic import RateLimitError
 from ha_client import get_states, call_service
-from memory import get_history, save_turn, get_notes, save_note, get_entity_cache, save_entity_cache, clear_entity_cache
+from memory import (
+    get_history, save_turn, get_notes, save_note,
+    get_entity_cache, save_entity_cache, clear_entity_cache,
+    add_reminder, get_user_reminders, deactivate_reminder,
+)
+import scheduler
 import config as cfg
 
 logger = logging.getLogger(__name__)
@@ -11,7 +17,7 @@ logger = logging.getLogger(__name__)
 client = anthropic.AsyncAnthropic(api_key=cfg.get("anthropic_key"))
 MODEL = "claude-haiku-4-5-20251001"
 
-TOOLS = [
+CORE_TOOLS = [
     {
         "name": "get_house_state",
         "description": "Scopri entità HA o leggi stato live. Senza entity_ids: restituisce lista cached (entity_id + nome) per trovare l'entity_id giusto. Con entity_ids: restituisce stato live di quelle entità.",
@@ -75,6 +81,46 @@ TOOLS = [
     },
 ]
 
+REMINDER_TOOLS = [
+    {
+        "name": "set_reminder",
+        "description": "Crea un promemoria. Usa remind_at (ISO datetime, es. '2026-06-03T18:30:00') per one-shot, OPPURE recurring (espressione cron a 5 campi 'min hour day month dow', es. '0 9 * * 1' = ogni lunedì 9:00) per ricorrenti. Non entrambi.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Testo del promemoria"},
+                "remind_at": {"type": "string", "description": "ISO datetime per promemoria one-shot"},
+                "recurring": {"type": "string", "description": "Espressione cron per promemoria ricorrenti"},
+            },
+            "required": ["message"],
+        },
+    },
+    {
+        "name": "list_reminders",
+        "description": "Elenca i promemoria attivi dell'utente corrente.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cancel_reminder",
+        "description": "Cancella un promemoria tramite il suo id (ottenuto da list_reminders).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer", "description": "ID del promemoria"}},
+            "required": ["id"],
+        },
+    },
+]
+
+def _module_enabled(name: str) -> bool:
+    return bool(cfg.get("modules", {}).get(name, False))
+
+
+def get_tools() -> list[dict]:
+    tools = list(CORE_TOOLS)
+    if _module_enabled("reminders"):
+        tools = tools[:-1] + REMINDER_TOOLS + [tools[-1]]
+    return tools
+
 
 async def refresh_entity_cache() -> int:
     states = await get_states(None)
@@ -111,6 +157,25 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
         if name == "save_memory":
             await save_note(user_id, inputs["key"], inputs["value"])
             return f"Nota '{inputs['key']}' salvata."
+        if name == "set_reminder":
+            remind_at = inputs.get("remind_at") or None
+            recurring = inputs.get("recurring") or None
+            if not remind_at and not recurring:
+                return "Errore: specifica remind_at (one-shot) o recurring (cron)."
+            r = await add_reminder(user_id, inputs["message"], remind_at, recurring)
+            if not scheduler.schedule_reminder(r):
+                await deactivate_reminder(r["id"], user_id)
+                return "Errore: orario non valido o nel passato."
+            return f"Promemoria #{r['id']} creato."
+        if name == "list_reminders":
+            rem = await get_user_reminders(user_id)
+            return json.dumps(rem, ensure_ascii=False) if rem else "Nessun promemoria attivo."
+        if name == "cancel_reminder":
+            ok = await deactivate_reminder(int(inputs["id"]), user_id)
+            if ok:
+                scheduler.cancel_job(int(inputs["id"]))
+                return f"Promemoria #{inputs['id']} cancellato."
+            return f"Promemoria #{inputs['id']} non trovato."
         if name == "respond":
             return "__respond__"
         return f"Tool sconosciuto: {name}"
@@ -122,7 +187,7 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
         return f"Errore imprevisto nel tool {name}."
 
 
-def _build_system(user_config: dict) -> str:
+async def _build_system(user_config: dict) -> list[dict]:
     name = user_config.get("name", "Utente")
     context = user_config.get("context", "")
     base = (
@@ -130,15 +195,34 @@ def _build_system(user_config: dict) -> str:
         "Sei integrata in Home Assistant e controlli la casa tramite i tool disponibili.\n\n"
         "REGOLE OBBLIGATORIE:\n"
         "- Devi SEMPRE usare il tool 'respond' per rispondere all'utente. Non puoi rispondere con testo libero.\n"
-        "- Se l'utente chiede di controllare qualcosa in casa, chiama PRIMA control_device (o get_house_state se non conosci l'entity_id), POI respond.\n"
-        "- NON chiedere MAI all'utente l'entity_id. Usa get_house_state (entity_ids vuoto) per scoprirlo.\n"
+        "- Hai già la lista completa delle entità qui sotto: usa direttamente l'entity_id giusto, NON chiamare get_house_state per scoprirlo.\n"
+        "- Se l'utente chiede di controllare qualcosa, chiama control_device col giusto entity_id, POI respond.\n"
+        "- Usa get_house_state SOLO se serve lo stato live di un'entità specifica (es. 'la luce è accesa?').\n"
+        "- NON chiedere MAI all'utente l'entity_id.\n"
         "- Per luci usa domain='light', service='turn_on' o 'turn_off', data={'entity_id': '...'}.\n"
         "- Per switch usa domain='switch'.\n"
         "- Rispondi in italiano, in modo conciso."
     )
+    if _module_enabled("reminders"):
+        base += (
+            "\n- Per promemoria usa set_reminder: calcola remind_at (ISO datetime) dalla data/ora attuale nel blocco volatile."
+            " Per ricorrenti usa recurring (cron 5 campi). Usa list_reminders/cancel_reminder per gestirli."
+        )
+
+    cached = await get_entity_cache()
+    if not cached:
+        await refresh_entity_cache()
+        cached = await get_entity_cache()
+    if cached:
+        base += f"\n\nENTITÀ DISPONIBILI (entity_id | nome):\n{cached}"
     if context:
         base += f"\n\nContesto utente: {context}"
-    return base
+
+    # Stable prefix cached; volatile datetime in separate uncached block.
+    return [
+        {"type": "text", "text": base, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": f"Data/ora attuale: {datetime.now().isoformat(timespec='seconds')}"},
+    ]
 
 
 async def chat(user_id: str, user_text: str, user_config: dict) -> str:
@@ -146,7 +230,7 @@ async def chat(user_id: str, user_text: str, user_config: dict) -> str:
     await save_turn(user_id, "user", user_text)
 
     messages = history + [{"role": "user", "content": user_text}]
-    system = _build_system(user_config)
+    system = await _build_system(user_config)
 
     try:
         while True:
@@ -154,7 +238,7 @@ async def chat(user_id: str, user_text: str, user_config: dict) -> str:
                 model=MODEL,
                 max_tokens=1024,
                 system=system,
-                tools=TOOLS,
+                tools=get_tools(),
                 tool_choice={"type": "any"},
                 messages=messages,
             )

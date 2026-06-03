@@ -28,6 +28,15 @@ async def init_db():
                 data TEXT NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                remind_at DATETIME,
+                recurring TEXT,
+                active INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         await db.commit()
 
@@ -101,3 +110,58 @@ async def save_entity_cache(data: str):
             (data,),
         )
         await db.commit()
+
+
+def _reminder_row(r) -> dict:
+    return {
+        "id": r[0],
+        "user_id": r[1],
+        "message": r[2],
+        "remind_at": r[3],
+        "recurring": r[4],
+    }
+
+
+async def add_reminder(user_id: str, message: str, remind_at: str | None, recurring: str | None) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO reminders (user_id, message, remind_at, recurring) VALUES (?, ?, ?, ?)",
+            (user_id, message, remind_at, recurring),
+        )
+        await db.commit()
+        rid = cursor.lastrowid
+    return {"id": rid, "user_id": user_id, "message": message, "remind_at": remind_at, "recurring": recurring}
+
+
+async def get_active_reminders() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, message, remind_at, recurring FROM reminders WHERE active = 1"
+        )
+        rows = await cursor.fetchall()
+    return [_reminder_row(r) for r in rows]
+
+
+async def get_user_reminders(user_id: str) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, message, remind_at, recurring FROM reminders WHERE active = 1 AND user_id = ?",
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+    return [_reminder_row(r) for r in rows]
+
+
+async def deactivate_reminder(reminder_id: int, user_id: str | None = None) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        if user_id is not None:
+            cursor = await db.execute(
+                "UPDATE reminders SET active = 0 WHERE id = ? AND user_id = ?",
+                (reminder_id, user_id),
+            )
+        else:
+            cursor = await db.execute(
+                "UPDATE reminders SET active = 0 WHERE id = ?", (reminder_id,)
+            )
+        await db.commit()
+        return cursor.rowcount > 0
