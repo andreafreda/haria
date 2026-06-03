@@ -113,6 +113,14 @@ async def init_db():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # migrazioni leggere: aggiungi colonne se mancano
+        for table, col, ddl in [
+            ("meal_plan", "kcal", "ALTER TABLE meal_plan ADD COLUMN kcal REAL"),
+        ]:
+            cur = await db.execute(f"PRAGMA table_info({table})")
+            cols = [r[1] for r in await cur.fetchall()]
+            if col not in cols:
+                await db.execute(ddl)
         await db.commit()
 
 
@@ -363,16 +371,18 @@ async def get_meals(member: str, date_from: str | None = None, date_to: str | No
 # ---- food_diary: piano settimanale ----
 
 async def set_plan_meal(date: str, meal_type: str, items: str,
-                        recipe: str | None = None, servings: int | None = None):
+                        recipe: str | None = None, servings: int | None = None,
+                        kcal: float | None = None):
     """Inserisce o sostituisce un pasto del piano (chiave date+meal_type)."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            """INSERT INTO meal_plan (date, meal_type, items, recipe, servings, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """INSERT INTO meal_plan (date, meal_type, items, recipe, servings, kcal, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                ON CONFLICT(date, meal_type) DO UPDATE SET
                  items=excluded.items, recipe=excluded.recipe,
-                 servings=excluded.servings, updated_at=CURRENT_TIMESTAMP""",
-            (date, meal_type, items, recipe, servings),
+                 servings=excluded.servings, kcal=excluded.kcal,
+                 updated_at=CURRENT_TIMESTAMP""",
+            (date, meal_type, items, recipe, servings, kcal),
         )
         await db.commit()
 
@@ -380,13 +390,14 @@ async def set_plan_meal(date: str, meal_type: str, items: str,
 async def get_meal_plan(date_from: str, date_to: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """SELECT date, meal_type, items, recipe, servings FROM meal_plan
+            """SELECT date, meal_type, items, recipe, servings, kcal FROM meal_plan
                WHERE date >= ? AND date <= ? ORDER BY date, meal_type""",
             (date_from, date_to),
         )
         rows = await cursor.fetchall()
     return [
-        {"date": r[0], "meal_type": r[1], "items": r[2], "recipe": r[3], "servings": r[4]}
+        {"date": r[0], "meal_type": r[1], "items": r[2], "recipe": r[3],
+         "servings": r[4], "kcal": r[5]}
         for r in rows
     ]
 
@@ -512,6 +523,22 @@ async def list_profiles() -> list[dict]:
         rows = await cursor.fetchall()
     cols = ("member", "sex", "age", "height_cm", "weight_kg", "goal",
             "activity_level", "kcal_target", "bmi")
+    return [dict(zip(cols, r)) for r in rows]
+
+
+async def export_meals(date_from: str, date_to: str) -> list[dict]:
+    """Tutti i pasti di tutti i membri in un intervallo (per export CSV)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT eaten_at, member, meal_type, description, kcal_total,
+                      protein_g, carbs_g, fat_g, logged_by
+               FROM meals WHERE DATE(eaten_at) >= ? AND DATE(eaten_at) <= ?
+               ORDER BY eaten_at""",
+            (date_from, date_to),
+        )
+        rows = await cursor.fetchall()
+    cols = ("eaten_at", "member", "meal_type", "description", "kcal_total",
+            "protein_g", "carbs_g", "fat_g", "logged_by")
     return [dict(zip(cols, r)) for r in rows]
 
 

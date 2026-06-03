@@ -195,6 +195,7 @@ TOOLS = [
                             "items": {"type": "string", "description": "Cosa si mangia (portate)"},
                             "recipe": {"type": "string", "description": "Ricetta breve opzionale"},
                             "servings": {"type": "integer", "description": "Numero porzioni/persone"},
+                            "kcal": {"type": "number", "description": "kcal stimate del pasto a porzione"},
                         },
                         "required": ["date", "meal_type", "items"],
                     },
@@ -226,6 +227,7 @@ TOOLS = [
                 "items": {"type": "string", "description": "Cosa si mangia"},
                 "recipe": {"type": "string"},
                 "servings": {"type": "integer"},
+                "kcal": {"type": "number", "description": "kcal stimate del pasto a porzione"},
             },
             "required": ["date", "meal_type", "items"],
         },
@@ -349,7 +351,7 @@ PROMPT = (
     " Un utente può registrare per un altro membro (es. la bimba): in tal caso usa il nome del membro indicato."
     " Per query storiche usa get_meals/get_weight_history."
     "\n- PIANO SETTIMANALE: per 'cosa si mangia oggi/questa settimana' usa get_meal_plan (calcola le date ISO dalla data attuale)."
-    " Se non esiste un piano, proponi di crearlo con plan_week: genera tu un menù vario tenendo conto di profili/dieta/allergie/preferenze della famiglia."
+    " Se non esiste un piano, proponi di crearlo con plan_week: genera tu un menù vario tenendo conto di profili/dieta/allergie/preferenze della famiglia, e STIMA le kcal di ogni pasto pianificato."
     " Se l'utente vuole cambiare un pasto, PROPONI 2-3 alternative coerenti; quando sceglie, salva con set_plan_meal."
     "\n- VALORI NUTRIZIONALI: prima di stimare kcal/macro a memoria, prova lookup_nutrition per dati reali (cache locale)."
     " Per prodotti confezionati col codice a barre usa lookup_barcode. Se la fonte non risponde, stima tu."
@@ -445,7 +447,7 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         for m in meals:
             await set_plan_meal(
                 m["date"], m["meal_type"], m["items"],
-                m.get("recipe"), m.get("servings"),
+                m.get("recipe"), m.get("servings"), m.get("kcal"),
             )
         return json.dumps({"ok": True, "count": len(meals)}, ensure_ascii=False)
 
@@ -456,7 +458,7 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
     if name == "set_plan_meal":
         await set_plan_meal(
             inputs["date"], inputs["meal_type"], inputs["items"],
-            inputs.get("recipe"), inputs.get("servings"),
+            inputs.get("recipe"), inputs.get("servings"), inputs.get("kcal"),
         )
         return json.dumps({"ok": True, "date": inputs["date"], "meal_type": inputs["meal_type"]}, ensure_ascii=False)
 

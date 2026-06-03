@@ -168,7 +168,7 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
         return f"Errore: {e}"
     except Exception as e:
         logger.error("Tool %s errore inatteso: %s", name, e)
-        return f"Errore imprevisto nel tool {name}."
+        return f"Errore nel tool {name}: {e}"
 
 
 async def _build_system(user_config: dict) -> list[dict]:

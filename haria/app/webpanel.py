@@ -9,10 +9,12 @@ Dashboard sola-lettura:
 import logging
 from datetime import date, timedelta
 from aiohttp import web
+import csv
+import io
 from memory import (
     get_meal_plan, list_profiles, list_members_with_meals,
     get_meals, get_day_totals, get_hydration_day, get_shopping_list,
-    get_weight_history,
+    get_weight_history, export_meals,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ def _page(title: str, body: str) -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA — Diario Alimentare</header>
-<nav><a href="./">Piano</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a></nav>
+<nav><a href="./">Piano</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./export.csv">Export CSV</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=html, content_type="text/html")
 
@@ -64,10 +66,14 @@ async def _h_plan(request):
         if not meals:
             body += " <span class='muted'>— niente pianificato</span>"
         else:
-            body += "<table><tr><th>Pasto</th><th>Portate</th><th>Ricetta</th><th>Porz.</th></tr>"
+            day_kcal = sum(m["kcal"] or 0 for m in meals)
+            if day_kcal:
+                body += f" <span class='kcal'>{round(day_kcal)} kcal</span>"
+            body += "<table><tr><th>Pasto</th><th>Portate</th><th>Ricetta</th><th>Porz.</th><th>kcal</th></tr>"
             for m in meals:
                 body += (f"<tr><td>{m['meal_type']}</td><td>{m['items'] or ''}</td>"
-                         f"<td class='muted'>{m['recipe'] or ''}</td><td>{m['servings'] or ''}</td></tr>")
+                         f"<td class='muted'>{m['recipe'] or ''}</td><td>{m['servings'] or ''}</td>"
+                         f"<td>{round(m['kcal']) if m['kcal'] else ''}</td></tr>")
             body += "</table>"
         body += "</div>"
     return _page("Piano", body)
@@ -136,12 +142,32 @@ async def _h_shopping(request):
     return _page("Spesa", body)
 
 
+async def _h_export(request):
+    end = date.today()
+    start = end - timedelta(days=30)
+    df = request.query.get("from") or start.isoformat()
+    dt = request.query.get("to") or end.isoformat()
+    rows = await export_meals(df, dt)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["data", "membro", "pasto", "descrizione", "kcal", "proteine_g", "carbo_g", "grassi_g", "registrato_da"])
+    for r in rows:
+        w.writerow([r["eaten_at"], r["member"], r["meal_type"], r["description"],
+                    r["kcal_total"], r["protein_g"], r["carbs_g"], r["fat_g"], r["logged_by"]])
+    return web.Response(
+        body=buf.getvalue().encode("utf-8-sig"),
+        content_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="haria_diario_{df}_{dt}.csv"'},
+    )
+
+
 def build_web_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", _h_plan)
     app.router.add_get("/diary", _h_diary)
     app.router.add_get("/profiles", _h_profiles)
     app.router.add_get("/shopping", _h_shopping)
+    app.router.add_get("/export.csv", _h_export)
     return app
 
 

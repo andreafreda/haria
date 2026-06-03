@@ -95,7 +95,12 @@ async def _food_morning():
         line = f"• {m['meal_type'].capitalize()}: {m['items']}"
         if m.get("recipe"):
             line += f" — {m['recipe']}"
+        if m.get("kcal"):
+            line += f" ({round(m['kcal'])} kcal)"
         lines.append(line)
+    tot = sum(m.get("kcal") or 0 for m in plan)
+    if tot:
+        lines.append(f"Totale stimato: {round(tot)} kcal")
     text = "\n".join(lines)
     for u in cfg.get("users", []):
         chat_id = u.get("chat_id")
