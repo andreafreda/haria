@@ -18,8 +18,16 @@ from memory import (
     get_pantry, get_pantry_expiring,
 )
 from modules.food_diary import compute_macro_targets
+import config as cfg
+from claude_engine import chat
 
 logger = logging.getLogger(__name__)
+
+
+def _chat_user() -> dict | None:
+    """Primo utente configurato (target chat ingress/dashboard)."""
+    users = cfg.get("users", [])
+    return users[0] if users else None
 
 _MEAL_ORDER = {"colazione": 0, "pranzo": 1, "snack": 2, "cena": 3}
 _GIORNI = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
@@ -38,6 +46,14 @@ th{background:#eef2fb}
 .kcal{font-weight:600;color:#3367d6}
 .muted{color:#888;font-size:13px}
 .chk{color:#39a845}
+#log{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.msg{padding:8px 12px;border-radius:12px;max-width:80%;white-space:pre-wrap;font-size:14px}
+.msg.u{align-self:flex-end;background:#3367d6;color:#fff}
+.msg.a{align-self:flex-start;background:#fff;border:1px solid #ddd}
+#cform{display:flex;gap:8px}
+#cin{flex:1;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:14px}
+#cbtn{padding:10px 18px;background:#3367d6;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer}
+#cbtn:disabled{opacity:.5}
 """
 
 
@@ -46,7 +62,7 @@ def _page(title: str, body: str) -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA — Diario Alimentare</header>
-<nav><a href="./">Piano</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./export.csv">Export CSV</a></nav>
+<nav><a href="./">Piano</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./chat">Chat</a><a href="./export.csv">Export CSV</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=html, content_type="text/html")
 
@@ -194,6 +210,51 @@ async def _h_pantry(request):
     return _page("Dispensa", body)
 
 
+async def _h_chat(request):
+    body = """<h2>Chat con HARIA</h2>
+<div class='card'>
+<div id='log'></div>
+<form id='cform'><input id='cin' autocomplete='off' placeholder='Scrivi a HARIA…' autofocus>
+<button id='cbtn' type='submit'>Invia</button></form>
+</div>
+<script>
+const log=document.getElementById('log'),form=document.getElementById('cform'),
+  inp=document.getElementById('cin'),btn=document.getElementById('cbtn');
+function add(text,cls){const d=document.createElement('div');d.className='msg '+cls;d.textContent=text;
+  log.appendChild(d);d.scrollIntoView();return d;}
+form.addEventListener('submit',async e=>{e.preventDefault();
+  const msg=inp.value.trim();if(!msg)return;
+  add(msg,'u');inp.value='';btn.disabled=true;
+  const wait=add('…','a');
+  try{const r=await fetch('./api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg})});
+    const j=await r.json();wait.textContent=j.reply||j.error||'Errore';}
+  catch(err){wait.textContent='Errore di rete';}
+  btn.disabled=false;inp.focus();});
+</script>"""
+    return _page("Chat", body)
+
+
+async def _h_chat_api(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON non valido"}, status=400)
+    message = (data.get("message") or "").strip()
+    if not message:
+        return web.json_response({"error": "Messaggio vuoto"}, status=400)
+    user_cfg = _chat_user()
+    if not user_cfg:
+        return web.json_response({"error": "Nessun utente configurato"}, status=503)
+    user_id = f"ha_chat_{user_cfg.get('chat_id', 'default')}"
+    try:
+        reply = await chat(user_id, message, user_cfg)
+        return web.json_response({"reply": reply})
+    except Exception as e:
+        logger.error("Chat ingress error: %s", e)
+        return web.json_response({"error": "Errore interno"}, status=500)
+
+
 async def _h_export(request):
     end = date.today()
     start = end - timedelta(days=30)
@@ -220,6 +281,8 @@ def build_web_app() -> web.Application:
     app.router.add_get("/profiles", _h_profiles)
     app.router.add_get("/shopping", _h_shopping)
     app.router.add_get("/pantry", _h_pantry)
+    app.router.add_get("/chat", _h_chat)
+    app.router.add_post("/api/chat", _h_chat_api)
     app.router.add_get("/export.csv", _h_export)
     return app
 
