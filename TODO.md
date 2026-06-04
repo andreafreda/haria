@@ -1,10 +1,11 @@
 # HARIA — TODO (livello codice)
 
-Stato: v0.1.44. Agenda unificata + import bollette PDF. Area food completa. Lavori residui sotto.
+Stato: v0.1.45. Agenda unificata + import bollette PDF con dedup. Area food completa. Lavori residui sotto.
 
-## Bollette PDF → dashboard Consumi — fatto (v0.1.44)
+## Bollette PDF → dashboard Consumi — fatto (v0.1.44→v0.1.45)
 
 - [x] **Modulo `bollette`** — tool `update_bill(utility, year, month_start, month_end?, consumo?, costo?)`. Utente manda PDF al bot; Claude legge il documento (già passato come doc_b64) ed estrae dati; update_bill riusa gli script HA `script.salva_consumi_<u>`/`script.salva_costo_<u>` settando i helper input_select/input_number. Toggle `modules.bollette`.
+- [x] **Dedup (v0.1.45)** — prima di scrivere, `update_bill` legge `input_text.csv_<u>_<metric>_<year>` (metric: corrente=kwh, acqua/gas=m3, costo) e controlla gli slot dei mesi target. Se ≠0 ritorna `{ok:false, gia_registrato:true, esistente:{...}}` senza scrivere; Claude mostra vecchio vs nuovo e chiede conferma → richiama con `confirm=true` per sovrascrivere.
 
 ## Agenda unificata — fatto (v0.1.43)
 

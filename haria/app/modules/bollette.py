@@ -6,7 +6,7 @@ script.salva_costo_*) per scrivere i CSV mensili.
 """
 import json
 import asyncio
-from ha_client import call_service
+from ha_client import call_service, get_states
 
 NAME = "bollette"
 
@@ -20,6 +20,9 @@ _CONS_VAL = {
     "gas": "input_number.bolletta_gas_m3",
 }
 _UNIT = {"corrente": "kWh", "acqua": "m³", "gas": "m³"}
+
+# metric usato nel nome entità input_text.csv_<u>_<metric>_<year>
+_CONS_METRIC = {"corrente": "kwh", "acqua": "m3", "gas": "m3"}
 
 
 def _norm_utility(u: str) -> str | None:
@@ -66,6 +69,7 @@ TOOLS = [
                 "month_end": {"type": "integer", "description": "Mese fine periodo 1-12; ometti se mese singolo"},
                 "consumo": {"type": "number", "description": "Consumo totale periodo (kWh o m³)"},
                 "costo": {"type": "number", "description": "Costo totale periodo in €"},
+                "confirm": {"type": "boolean", "description": "Metti true SOLO se l'utente conferma di voler sovrascrivere dati già registrati per quel periodo. Default false."},
             },
             "required": ["utility", "year", "month_start"],
         },
@@ -76,8 +80,43 @@ PROMPT = (
     "\n- BOLLETTE: se l'utente manda il PDF di una bolletta (corrente/luce, acqua, gas), leggi il documento, "
     "estrai utility, anno, mese inizio/fine del periodo fatturato, consumo (kWh corrente, m³ acqua/gas) e costo "
     "totale €, poi chiama update_bill. Se un dato non è chiaro nel PDF, chiedi conferma prima di salvare. "
-    "Mese singolo: ometti month_end. Aggiorna sia consumo sia costo se presenti."
+    "Mese singolo: ometti month_end. Aggiorna sia consumo sia costo se presenti. "
+    "Se update_bill risponde che il periodo è già registrato (dati esistenti), NON reinviare con confirm "
+    "da solo: mostra all'utente i valori già presenti e i nuovi, chiedi se sovrascrivere; richiama con "
+    "confirm=true solo dopo conferma esplicita."
 )
+
+
+def _month_idx(m_name: str) -> int:
+    return _MESI.index(m_name)  # 0-based
+
+
+async def _read_csv(u: str, metric: str, year: int) -> list[float]:
+    """Ritorna i 12 valori mensili del CSV, 0.0 se entità assente/vuota."""
+    eid = f"input_text.csv_{u}_{metric}_{year}"
+    states = await get_states([eid])
+    if not states:
+        return [0.0] * 12
+    raw = (states[0].get("state") or "").split(",")
+    out = []
+    for v in raw:
+        try:
+            out.append(float(v.strip()))
+        except (ValueError, AttributeError):
+            out.append(0.0)
+    while len(out) < 12:
+        out.append(0.0)
+    return out[:12]
+
+
+async def _existing(u: str, metric: str, year: int, i_s: int, i_e: int) -> list[tuple]:
+    """Slot già valorizzati (≠0) nel range mesi [i_s, i_e]. Ritorna [(mese_name, val)]."""
+    vals = await _read_csv(u, metric, year)
+    hits = []
+    for i in range(i_s, i_e + 1):
+        if vals[i] != 0.0:
+            hits.append((_MESI[i], vals[i]))
+    return hits
 
 
 async def _set(entity_id: str, service: str, value) -> None:
@@ -125,6 +164,33 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
     costo = inputs.get("costo")
     if consumo is None and costo is None:
         return "Serve almeno consumo o costo."
+
+    confirm = bool(inputs.get("confirm", False))
+    i_s = _month_idx(m_s)
+    i_e = _month_idx(m_e) if m_e != "—" else i_s
+
+    # dedup: se non confermato, controlla se gli slot target sono già valorizzati
+    if not confirm:
+        existing = {}
+        if consumo is not None:
+            h = await _existing(u, _CONS_METRIC[u], year, i_s, i_e)
+            if h:
+                existing["consumo"] = [{"mese": m, "valore": v, "unita": _UNIT[u]} for m, v in h]
+        if costo is not None:
+            h = await _existing(u, "costo", year, i_s, i_e)
+            if h:
+                existing["costo"] = [{"mese": m, "valore": v} for m, v in h]
+        if existing:
+            periodo = m_s + (f" - {m_e}" if m_e != "—" else "") + f" {year}"
+            return json.dumps({
+                "ok": False,
+                "gia_registrato": True,
+                "utility": u,
+                "periodo": periodo,
+                "esistente": existing,
+                "msg": ("Periodo già registrato. Mostra all'utente i valori esistenti vs i nuovi e "
+                        "chiedi conferma; poi richiama update_bill con confirm=true per sovrascrivere."),
+            }, ensure_ascii=False)
 
     done = []
     if consumo is not None:
