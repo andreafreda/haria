@@ -200,9 +200,27 @@ async def _build_system(user_config: dict) -> list[dict]:
         base += f"\n\nContesto utente: {context}"
 
     # Stable prefix cached; volatile datetime in separate uncached block.
+    from datetime import timedelta
+    now = datetime.now()
+    _gg = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
+    monday = now.date() - timedelta(days=now.weekday())
+    week_map = "; ".join(
+        f"{_gg[i]}={(monday + timedelta(days=i)).isoformat()}" for i in range(7)
+    )
+    next_monday = monday + timedelta(days=7)
+    week_map_next = "; ".join(
+        f"{_gg[i]}={(next_monday + timedelta(days=i)).isoformat()}" for i in range(7)
+    )
+    dt_block = (
+        f"Data/ora attuale: {now.isoformat(timespec='seconds')} ({_gg[now.weekday()]}).\n"
+        f"Date ISO settimana CORRENTE (lun-dom): {week_map}.\n"
+        f"Date ISO settimana PROSSIMA: {week_map_next}.\n"
+        "Quando salvi/leggi un pasto usa ESATTAMENTE l'ISO di queste mappe per il giorno citato. "
+        "Non calcolare la data a mano."
+    )
     return [
         {"type": "text", "text": base, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": f"Data/ora attuale: {datetime.now().isoformat(timespec='seconds')}"},
+        {"type": "text", "text": dt_block},
     ]
 
 
