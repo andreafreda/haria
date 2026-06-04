@@ -62,9 +62,29 @@ def _page(title: str, body: str) -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA — Diario Alimentare</header>
-<nav><a href="./">Piano</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./chat">Chat</a><a href="./export.csv">Export CSV</a></nav>
+<nav><a href="./">Piano</a><a href="./month">Mese</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./chat">Chat</a><a href="./export.csv">Export CSV</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=html, content_type="text/html")
+
+
+def _day_card(label: str, meals: list[dict]) -> str:
+    """Render una card-giorno del piano pasti."""
+    out = f"<div class='card'><b>{label}</b>"
+    if not meals:
+        out += " <span class='muted'>— niente pianificato</span></div>"
+        return out
+    day_kcal = sum(m["kcal"] or 0 for m in meals if not (m.get("member") or "").strip())
+    if day_kcal:
+        out += f" <span class='kcal'>{round(day_kcal)} kcal</span>"
+    out += "<table><tr><th>Pasto</th><th>Chi</th><th>Portate</th><th>Ricetta</th><th>Porz.</th><th>kcal</th></tr>"
+    for m in meals:
+        who = (m.get("member") or "").strip()
+        who_lbl = who.capitalize() if who else "<span class='muted'>comune</span>"
+        out += (f"<tr><td>{m['meal_type']}</td><td>{who_lbl}</td><td>{m['items'] or ''}</td>"
+                f"<td class='muted'>{m['recipe'] or ''}</td><td>{m['servings'] or ''}</td>"
+                f"<td>{round(m['kcal']) if m['kcal'] else ''}</td></tr>")
+    out += "</table></div>"
+    return out
 
 
 async def _h_plan(request):
@@ -78,26 +98,35 @@ async def _h_plan(request):
     if not plan:
         body += "<div class='card muted'>Nessun piano per questa settimana. Chiedi a HARIA su Telegram: «pianifica la settimana».</div>"
     for i, d in enumerate(days):
-        iso = d.isoformat()
-        meals = sorted(by_day.get(iso, []),
+        meals = sorted(by_day.get(d.isoformat(), []),
                        key=lambda m: (_MEAL_ORDER.get(m["meal_type"], 9), m.get("member") or ""))
-        body += f"<div class='card'><b>{_GIORNI[i]} {d.strftime('%d/%m')}</b>"
-        if not meals:
-            body += " <span class='muted'>— niente pianificato</span>"
-        else:
-            day_kcal = sum(m["kcal"] or 0 for m in meals if not (m.get("member") or "").strip())
-            if day_kcal:
-                body += f" <span class='kcal'>{round(day_kcal)} kcal</span>"
-            body += "<table><tr><th>Pasto</th><th>Chi</th><th>Portate</th><th>Ricetta</th><th>Porz.</th><th>kcal</th></tr>"
-            for m in meals:
-                who = (m.get("member") or "").strip()
-                who_lbl = who.capitalize() if who else "<span class='muted'>comune</span>"
-                body += (f"<tr><td>{m['meal_type']}</td><td>{who_lbl}</td><td>{m['items'] or ''}</td>"
-                         f"<td class='muted'>{m['recipe'] or ''}</td><td>{m['servings'] or ''}</td>"
-                         f"<td>{round(m['kcal']) if m['kcal'] else ''}</td></tr>")
-            body += "</table>"
-        body += "</div>"
+        body += _day_card(f"{_GIORNI[i]} {d.strftime('%d/%m')}", meals)
     return _page("Piano", body)
+
+
+async def _h_month(request):
+    today = date.today()
+    first = today.replace(day=1)
+    nxt = first.replace(year=first.year + 1, month=1) if first.month == 12 \
+        else first.replace(month=first.month + 1)
+    last = nxt - timedelta(days=1)
+    days = [(first + timedelta(days=i)) for i in range((last - first).days + 1)]
+    plan = await get_meal_plan(first.isoformat(), last.isoformat())
+    by_day = {}
+    for m in plan:
+        by_day.setdefault(m["date"], []).append(m)
+    mese_nome = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+                 "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"][first.month - 1]
+    body = f"<h2>Piano mensile — {mese_nome} {first.year}</h2>"
+    if not plan:
+        body += "<div class='card muted'>Nessun piano per questo mese. Chiedi a HARIA: «pianifica la settimana».</div>"
+    for d in days:
+        meals = sorted(by_day.get(d.isoformat(), []),
+                       key=lambda m: (_MEAL_ORDER.get(m["meal_type"], 9), m.get("member") or ""))
+        if not meals:
+            continue  # mese lungo: salta giorni vuoti
+        body += _day_card(f"{_GIORNI[d.weekday()]} {d.strftime('%d/%m')}", meals)
+    return _page("Mese", body)
 
 
 async def _h_diary(request):
@@ -277,6 +306,7 @@ async def _h_export(request):
 def build_web_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", _h_plan)
+    app.router.add_get("/month", _h_month)
     app.router.add_get("/diary", _h_diary)
     app.router.add_get("/profiles", _h_profiles)
     app.router.add_get("/shopping", _h_shopping)
