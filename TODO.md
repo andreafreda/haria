@@ -1,11 +1,15 @@
 # HARIA — TODO (livello codice)
 
-Stato: v0.1.45. Agenda unificata + import bollette PDF con dedup. Area food completa. Lavori residui sotto.
+Stato: v0.1.47. Agenda unificata + import bollette PDF con dedup. Area food completa. Lavori residui sotto.
 
-## Bollette PDF → dashboard Consumi — fatto (v0.1.44→v0.1.45)
+## Bollette PDF → dashboard Consumi — fatto (v0.1.44→v0.1.47)
 
 - [x] **Modulo `bollette`** — tool `update_bill(utility, year, month_start, month_end?, consumo?, costo?)`. Utente manda PDF al bot; Claude legge il documento (già passato come doc_b64) ed estrae dati; update_bill riusa gli script HA `script.salva_consumi_<u>`/`script.salva_costo_<u>` settando i helper input_select/input_number. Toggle `modules.bollette`.
 - [x] **Dedup (v0.1.45)** — prima di scrivere, `update_bill` legge `input_text.csv_<u>_<metric>_<year>` (metric: corrente=kwh, acqua/gas=m3, costo) e controlla gli slot dei mesi target. Se ≠0 ritorna `{ok:false, gia_registrato:true, esistente:{...}}` senza scrivere; Claude mostra vecchio vs nuovo e chiede conferma → richiama con `confirm=true` per sovrascrivere.
+- [x] **Prompt forza update_bill (v0.1.46)** — `bollette.PROMPT` reso imperativo: PDF bolletta ⇒ update_bill obbligatorio, vietato `save_memory`/script grezzi.
+- [x] **Fix classificazione PDF (v0.1.47)** — `claude_engine` hardcodava ogni PDF come "dieta" (testo default → `save_diet`). Ora il testo default elenca i casi (bolletta→update_bill, dieta→save_diet) e lascia classificare al modello.
+- [x] **Fix config stale (runtime, no bump)** — `/config/haria_options.json` (letto con priorità su `/data/options.json`) era vecchio: `modules` aveva `reminders`/`todo`, mancavano `agenda` e `bollette` → entrambi i moduli OFF a runtime nonostante l'UI addon. Riscritto via FTP con i moduli giusti + restart. **Gotcha: ogni nuovo modulo va aggiunto anche a quel file, non basta config.yaml/UI.**
+- [x] **Verifica live** — A2A elettrica Mar–Apr 2026 (557 kWh→278.5+278.5, 162€→81+81) scritta ok. Gas Plenitude Gen–Feb: dedup ha bloccato (valori già presenti).
 
 ## Agenda unificata — fatto (v0.1.43)
 
@@ -25,7 +29,7 @@ Stato: v0.1.45. Agenda unificata + import bollette PDF con dedup. Area food comp
 
 ## Food — fatto (v0.1.28)
 
-- [x] **Sync spesa → To-do HA dedup** — `sync_shopping_to_ha` ora chiama `todo.get_items`, salta item già presenti, ritorna `{ok,list,added,skipped}`. Manca solo: nessuna entità `todo.*` esiste in HA (azione utente: installare integrazione To-do/Shopping List).
+- [x] **Sync spesa → To-do HA dedup** — `sync_shopping_to_ha` ora chiama `todo.get_items`, salta item già presenti, ritorna `{ok,list,added,skipped}`. Entità target ora esistono (`todo.cose_da_fare`/`promemoria`/`spesa`).
 - [x] **Macro target webpanel** — `_h_diary` riga "vs target", `_h_profiles` colonne Prot./Carbo/Grassi target via `compute_macro_targets()`. Pagina `/pantry` + nav.
 - [x] **Dispensa / scorte (anti-spreco)** — tabella `pantry_items` + 5 funzioni in `memory.py`; 4 tool in `food_diary.py`; sensor MQTT `dispensa` + `dispensa_in_scadenza`; alert scheduler 08:30; vista HA "Dispensa".
 
@@ -49,7 +53,7 @@ Stato: v0.1.45. Agenda unificata + import bollette PDF con dedup. Area food comp
 ## Residui aperti
 
 - [ ] **Ruotare token** (HA JWT + Telegram) prima di pubblicare repo. Differito da utente. Token attuali ancora validi/esposti in cache GitHub / cloni.
-- [ ] **Integrazione To-do/Shopping List HA** (azione UTENTE) — 0 entità `todo.*`; `sync_shopping_to_ha` pronto ma senza target.
+- [x] **Integrazione To-do/Shopping List HA** — entità esistono: `todo.cose_da_fare`, `todo.promemoria`, `todo.spesa`. `sync_shopping_to_ha` ora ha target.
 - [ ] **ha_chat → conversation agent nativo (Assist pipeline)** — opzionale, più complesso.
 
 ## Note tecniche
