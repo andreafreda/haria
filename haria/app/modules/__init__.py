@@ -26,8 +26,22 @@ def tools() -> list[dict]:
 
 
 def prompt() -> str:
-    """Frammenti system prompt dei moduli abilitati, concatenati."""
-    return "".join(m.PROMPT for m in _enabled())
+    """Frammenti system prompt dei moduli abilitati, concatenati.
+
+    Oltre a PROMPT statico, se un modulo espone `dynamic_prompt()` (callable)
+    il suo output viene aggiunto: serve per contenuti che cambiano a runtime
+    (es. diete caricate da /config senza riavvio).
+    """
+    out = []
+    for m in _enabled():
+        out.append(m.PROMPT)
+        fn = getattr(m, "dynamic_prompt", None)
+        if callable(fn):
+            try:
+                out.append(fn())
+            except Exception:
+                pass
+    return "".join(out)
 
 
 def owns(name: str) -> bool:

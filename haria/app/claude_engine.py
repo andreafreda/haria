@@ -207,11 +207,20 @@ async def _build_system(user_config: dict) -> list[dict]:
 
 
 async def chat(user_id: str, user_text: str, user_config: dict,
-               image_b64: str | None = None, image_media_type: str = "image/jpeg") -> str:
+               image_b64: str | None = None, image_media_type: str = "image/jpeg",
+               doc_b64: str | None = None, doc_media_type: str = "application/pdf") -> str:
     history = await get_history(user_id)
-    await save_turn(user_id, "user", user_text or "[foto]")
+    placeholder = "[foto]" if image_b64 else ("[pdf]" if doc_b64 else None)
+    await save_turn(user_id, "user", user_text or placeholder or "")
 
-    if image_b64:
+    if doc_b64:
+        content = [
+            {"type": "document", "source": {
+                "type": "base64", "media_type": doc_media_type, "data": doc_b64}},
+            {"type": "text", "text": user_text or "Questo è un PDF di una dieta. Estrai il contenuto rilevante e salvalo con save_diet."},
+        ]
+        messages = history + [{"role": "user", "content": content}]
+    elif image_b64:
         content = [
             {"type": "image", "source": {
                 "type": "base64", "media_type": image_media_type, "data": image_b64}},

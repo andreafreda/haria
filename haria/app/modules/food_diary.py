@@ -16,6 +16,7 @@ from memory import (
     add_shopping_items, get_shopping_list, check_shopping_item, clear_shopping_list,
 )
 import nutrition
+from ha_client import get_states, call_service
 
 NAME = "food_diary"
 
@@ -39,11 +40,19 @@ def _norm(member: str) -> str:
 # Diete di riferimento ("spunto"): caricate da repo (app/diets) + cartella
 # persistente FTP-accessibile (/config/haria_diets). Estendibile senza codice:
 # basta aggiungere file .md/.txt in /config/haria_diets.
+_DIET_WRITE_DIR = os.environ.get("DIETS_PATH", "/config/haria_diets")
 _DIET_DIRS = [
     os.path.join(os.path.dirname(__file__), "..", "diets"),
-    os.environ.get("DIETS_PATH", "/config/haria_diets"),
+    _DIET_WRITE_DIR,
 ]
 _DIET_EXTS = ("*.md", "*.txt")
+
+
+def _slugify(s: str) -> str:
+    import re
+    s = (s or "dieta").strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return s or "dieta"
 
 
 def load_diets() -> str:
@@ -81,6 +90,11 @@ def diet_prompt() -> str:
         "quando generi menù con plan_week/set_plan_meal. Non sono un piano attivo "
         "rigido salvo richiesta esplicita.\n\n" + diets
     )
+
+
+# Esposto al registry: contenuto diete iniettato a ogni messaggio (così le
+# diete aggiunte a runtime via save_diet sono subito attive, senza riavvio).
+dynamic_prompt = diet_prompt
 
 
 def compute_bmi(weight_kg: float, height_cm: float) -> float | None:
@@ -391,6 +405,40 @@ TOOLS = [
             "properties": {"only_checked": {"type": "boolean"}},
         },
     },
+    {
+        "name": "sync_shopping_to_ha",
+        "description": (
+            "Copia la lista della spesa interna in una lista todo nativa di Home Assistant "
+            "(visibile in app e dashboard HA). Usa quando l'utente vuole la spesa 'sul telefono'/in HA."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "list": {"type": "string", "description": "Nome o entity_id lista todo HA; default prima disponibile"},
+            },
+        },
+    },
+    {
+        "name": "save_diet",
+        "description": (
+            "Salva una dieta di riferimento (spunto) in modo persistente ed estensibile. "
+            "Usa dopo aver estratto il contenuto di un PDF/dieta inviato dall'utente. "
+            "Il contenuto diventa subito disponibile come ispirazione per i piani pasto."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Nome breve descrittivo (es. 'dieta agosto 2025')"},
+                "content": {"type": "string", "description": "Contenuto sintetico in markdown: profilo, regole, frequenze, menù, porzioni, sostituzioni"},
+            },
+            "required": ["name", "content"],
+        },
+    },
+    {
+        "name": "list_diets",
+        "description": "Elenca le diete di riferimento attualmente caricate (nomi file).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
 PROMPT = (
@@ -408,9 +456,8 @@ PROMPT = (
     "\n- SPESA: per generare la lista della spesa, leggi il piano (get_meal_plan), GENERA tu gli ingredienti aggregati e salvali con add_shopping_items."
     " Per consultarla usa get_shopping_list, per spuntare check_shopping_item, per svuotare clear_shopping_list."
     "\n- CONSIGLI: quando proponi cosa cucinare, tieni conto di profili/obiettivi/allergie e privilegia ricette semplici e veloci; offri sempre alternative."
+    "\n- DIETE PDF: se l'utente manda un PDF di una dieta, ESTRAI il contenuto rilevante (profilo, regole, frequenze, menù, porzioni, sostituzioni) in forma sintetica e SALVALO con save_diet (name breve descrittivo, content in markdown). Conferma e, se richiesto, riadatta il piano (plan_week) sulla nuova dieta."
 )
-
-PROMPT += diet_prompt()
 
 
 async def _recompute_profile_derived(member: str) -> dict | None:
@@ -560,5 +607,46 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
     if name == "clear_shopping_list":
         n = await clear_shopping_list(inputs.get("only_checked", False))
         return json.dumps({"ok": True, "removed": n}, ensure_ascii=False)
+
+    if name == "sync_shopping_to_ha":
+        lst = await get_shopping_list(False)
+        if not lst:
+            return "Lista spesa interna vuota: niente da sincronizzare."
+        # risolvi lista todo HA
+        states = await get_states(None)
+        todos = [s["entity_id"] for s in states if s["entity_id"].startswith("todo.")]
+        if not todos:
+            return "Nessuna lista todo in HA. Aggiungi l'integrazione 'Lista cose da fare'/'Shopping List'."
+        want = (inputs.get("list") or "").strip().lower()
+        target = todos[0]
+        if want:
+            target = next((e for e in todos if want in e.lower()), todos[0])
+        added = 0
+        for it in lst:
+            label = it.get("name", "")
+            qty = it.get("qty")
+            item = f"{label} ({qty})" if qty else label
+            if not item:
+                continue
+            await call_service("todo", "add_item", {"entity_id": target, "item": item})
+            added += 1
+        return json.dumps({"ok": True, "list": target, "added": added}, ensure_ascii=False)
+
+    if name == "save_diet":
+        os.makedirs(_DIET_WRITE_DIR, exist_ok=True)
+        slug = _slugify(inputs["name"])
+        path = os.path.join(_DIET_WRITE_DIR, f"{slug}.md")
+        header = f"# {inputs['name'].strip()}\n\n"
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(header + inputs["content"].strip() + "\n")
+        return json.dumps({"ok": True, "saved": f"{slug}.md", "dir": _DIET_WRITE_DIR}, ensure_ascii=False)
+
+    if name == "list_diets":
+        names = []
+        for d in _DIET_DIRS:
+            if d and os.path.isdir(d):
+                names += [os.path.basename(f) for ext in _DIET_EXTS
+                          for f in glob.glob(os.path.join(d, ext))]
+        return json.dumps(sorted(set(names)), ensure_ascii=False) if names else "Nessuna dieta caricata."
 
     return f"Tool sconosciuto nel modulo {NAME}: {name}"
