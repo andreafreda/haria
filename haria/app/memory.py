@@ -417,6 +417,15 @@ async def add_meal(member: str, meal_type: str, description: str, totals: dict,
     return {"id": meal_id, "member": member, "meal_type": meal_type}
 
 
+async def delete_meal(meal_id: int) -> bool:
+    """Cancella un pasto registrato (e i suoi meal_items). Ritorna True se cancellato."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM meal_items WHERE meal_id = ?", (int(meal_id),))
+        cursor = await db.execute("DELETE FROM meals WHERE id = ?", (int(meal_id),))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_meals(member: str, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
     q = ("SELECT id, meal_type, description, kcal_total, protein_g, carbs_g, fat_g, eaten_at "
          "FROM meals WHERE member = ?")
