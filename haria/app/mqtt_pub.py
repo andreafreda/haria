@@ -21,7 +21,7 @@ import aiohttp
 import config as cfg
 from memory import (
     list_profiles, get_day_totals, get_hydration_day,
-    get_meal_plan, get_shopping_list, get_shopping_cost, get_profile,
+    get_meal_plan, get_meals, get_shopping_list, get_shopping_cost, get_profile,
     get_pantry, get_pantry_expiring, get_weight_stats,
 )
 
@@ -185,6 +185,8 @@ async def publish_discovery():
         _disc_sensor(f"haria_{s}_peso_max_30d", f"{cap} peso max 30g", f"{base}/peso_max_30d", "kg", "mdi:arrow-up-bold")
         _disc_sensor(f"haria_{s}_bmi", f"{cap} BMI", f"{base}/bmi", icon="mdi:human",
                      state_class="measurement")
+        _disc_sensor(f"haria_{s}_diario_settimana", f"{cap} diario settimana", f"{base}/diario_settimana/state",
+                     icon="mdi:book-open-variant", json_attr_topic=f"{base}/diario_settimana/attr")
     # globali
     _disc_sensor("haria_piano_oggi", "Piano oggi", f"{_BASE}/piano_oggi/state",
                  icon="mdi:silverware-fork-knife", json_attr_topic=f"{_BASE}/piano_oggi/attr")
@@ -242,6 +244,24 @@ async def refresh():
             _pub(f"{base}/peso_max_30d", "")
         _pub(f"{base}/peso", weight if weight is not None else "")
         _pub(f"{base}/bmi", bmi if bmi is not None else "")
+        # diario settimana: pasti registrati realmente (lun-dom corrente)
+        d_start = date.today() - timedelta(days=date.today().weekday())
+        d_days = [(d_start + timedelta(days=i)) for i in range(7)]
+        wmeals = await get_meals(m, d_days[0].isoformat(), d_days[-1].isoformat())
+        by_day_d = {}
+        for x in wmeals:
+            by_day_d.setdefault((x.get("eaten_at") or "")[:10], []).append(x)
+        dattr = {}
+        for d in d_days:
+            iso = d.isoformat()
+            ms = sorted(by_day_d.get(iso, []), key=lambda x: _MEAL_ORDER.get(x["meal_type"], 9))
+            dattr[iso] = "; ".join(
+                f"{x['meal_type']}: {x['description']}"
+                + (f" ({round(x['kcal_total'])} kcal)" if x.get("kcal_total") else "")
+                for x in ms
+            ) if ms else ""
+        _pub(f"{base}/diario_settimana/state", f"{len(wmeals)} pasti" if wmeals else "nessun pasto")
+        _pub(f"{base}/diario_settimana/attr", dattr)
 
     # piano oggi (comune + override personali)
     plan = await get_meal_plan(today, today)
