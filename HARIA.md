@@ -104,10 +104,17 @@ Testo → Claude → sceglie tool → esegue → risposta → Telegram
 | `control_device` | core | Controlla dispositivi HA |
 | `get_memory` | core | Recupera note e conversazioni passate |
 | `save_memory` | core | Salva note e preferenze utente |
-| `send_message_to_user` | multi_user | Manda messaggio a un altro utente |
-| `set_reminder` | reminders | Crea promemoria one-shot o ricorrente |
-| `manage_todo` | todo | Gestisce liste della spesa e todo |
-| `log_meal` | food_diary | Registra pasto con stima calorie |
+| `speak_alexa` | core | Annuncio vocale su dispositivi Echo/Alexa |
+| `send_message_to_user` | multi_user | Manda messaggio Telegram proattivo a un altro membro |
+| `set_reminder` / `list_reminders` / `cancel_reminder` | reminders | Promemoria one-shot o ricorrenti |
+| `set_diet_profile` / `get_diet_profile` | food_diary | Profilo nutrizionale (BMI, kcal_target) |
+| `log_weight` / `get_weight_history` | food_diary | Peso e trend BMI |
+| `log_meal` / `get_meals` | food_diary | Log pasti + stima nutrizionale (anche da foto via vision) |
+| `plan_week` / `get_meal_plan` / `set_plan_meal` | food_diary | Piano pasti settimanale (con kcal) + alternative |
+| `get_daily_summary` | food_diary | Riepilogo kcal/macro/acqua vs obiettivo |
+| `log_hydration` / `get_hydration` | food_diary | Idratazione giornaliera |
+| `lookup_nutrition` / `lookup_barcode` | food_diary | Valori reali OpenFoodFacts/USDA (cache) |
+| `add_shopping_items` / `get_shopping_list` / `check_shopping_item` / `clear_shopping_list` | food_diary | Lista della spesa |
 | `search_web` | web_search | Cerca informazioni in tempo reale |
 
 ---
@@ -269,6 +276,53 @@ CREATE TABLE todos (
 - [ ] hacs.json e metadati
 - [ ] README utente finale
 - [ ] Pubblicazione HACS
+
+---
+
+## Stato e roadmap residua (giugno 2026, v0.1.19)
+
+### Fatto
+- Core completo (Must Have 1-7), voce (Groq Whisper), multi-utente, memoria SQLite
+- Moduli attivi: `reminders`, `web_search`, `multi_user`, `food_diary`
+- `food_diary` — tutte le 8 fasi del doc (`docs/food_diary.md`): profili/BMI/peso, log pasti,
+  piano settimanale con kcal + alternative, riepilogo giornaliero, lista spesa, idratazione,
+  barcode, foto pasto (vision), fonti OpenFoodFacts/USDA con cache, notifiche proattive
+  (piano 08:00, report dom 20:00), pannello web ingress (Piano/Diario/Profili/Spesa/Export CSV)
+- Deploy automatico su HA reale (boot:auto, v0.1.19 in produzione)
+
+### Food — residui (dal doc food_diary.md)
+- [ ] **Micronutrienti**: oltre i 3 macro, tracciare fibre, zuccheri, grassi saturi, sodio,
+      vitamine/minerali (ferro/calcio/vit. D) — schema lo prevede, non ancora popolato
+- [ ] **Percentili crescita bimba**: ora si usa BMI adulto per tutti; per i bambini serve
+      peso/altezza per età (percentili), non BMI
+- [ ] **Dispensa/pantry**: tabella `pantry` mai creata → sblocca spesa che sottrae scorte +
+      "cosa cucino con gli avanzi"
+- [ ] **Controllo allergie esplicito**: ora solo via ragionamento prompt; manca avviso hard
+      quando un pasto contiene un allergene del membro
+- [ ] **Pannello web interattivo**: ora sola-lettura. Mancano check-off spesa, edit profili,
+      grafici kcal/peso settimana-mese, percentili bimba
+- [ ] **Budget/costo spesa**: stima costo lista + tetto settimanale → confluisce in `home_economics`
+
+### Modulo `home_economics` (feature request, non ancora avviato)
+
+Gestione economica della casa, stesso pattern modulare di `food_diary`.
+
+- [ ] Spese/entrate per categoria, saldo, budget mensile per categoria
+- [ ] Spese ricorrenti (bollette, mutuo, abbonamenti) + promemoria scadenze (riusa scheduler)
+- [ ] Report mensile proattivo via Telegram (riusa scheduler)
+- [ ] Collega spesa alimentare → costo cibo (ponte con `food_diary`)
+- [ ] Cross-user (spese famiglia condivise), come `food_diary`
+- [ ] Dashboard web (riusa `webpanel`): spese per categoria, trend, budget vs speso
+- [ ] Tabelle nuove: `transactions`, `budgets`, `recurring_expenses`
+- [ ] Tool: `add_expense`, `add_income`, `get_balance`, `set_budget`, `get_budget_status`,
+      `add_recurring_expense`, `get_monthly_report`
+
+### Altri residui HARIA.md
+- [ ] **`ha_chat`** (Fase 3): chat con HARIA dal pannello web HA, non solo Telegram (flag off)
+- [ ] **`todo`** (N3): integrazione con le todo list native di HA (`manage_todo`) — flag off;
+      ora la spesa è una tabella interna a `food_diary`
+- [ ] **N6 HACS**: `hacs.json`, README utente, pubblicazione community
+- [ ] **N7 companion app Android**: sostituto Google Assistant sul telefono (progetto a sé)
 
 ---
 
