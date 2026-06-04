@@ -77,9 +77,11 @@ TOOLS = [
 ]
 
 PROMPT = (
-    "\n- BOLLETTE: se l'utente manda il PDF di una bolletta (corrente/luce, acqua, gas), leggi il documento, "
-    "estrai utility, anno, mese inizio/fine del periodo fatturato, consumo (kWh corrente, m³ acqua/gas) e costo "
-    "totale €, poi chiama update_bill. Se un dato non è chiaro nel PDF, chiedi conferma prima di salvare. "
+    "\n- BOLLETTE: se l'utente manda il PDF di una bolletta (corrente/luce, acqua, gas) DEVI chiamare il tool "
+    "update_bill. NON salvare la bolletta solo in memoria con save_memory: i dati vanno scritti nella dashboard "
+    "Consumi via update_bill, è l'unico modo corretto. Leggi il documento, estrai utility, anno, mese inizio/fine "
+    "del periodo fatturato, consumo (kWh corrente, m³ acqua/gas) e costo totale €, poi chiama update_bill. "
+    "Se un dato non è chiaro nel PDF, chiedi conferma prima di salvare. "
     "Mese singolo: ometti month_end. Aggiorna sia consumo sia costo se presenti. "
     "Se update_bill risponde che il periodo è già registrato (dati esistenti), NON reinviare con confirm "
     "da solo: mostra all'utente i valori già presenti e i nuovi, chiedi se sovrascrivere; richiama con "
