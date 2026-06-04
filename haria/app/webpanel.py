@@ -14,8 +14,10 @@ import io
 from memory import (
     get_meal_plan, list_profiles, list_members_with_meals,
     get_meals, get_day_totals, get_hydration_day, get_shopping_list,
-    get_weight_history, export_meals,
+    get_weight_history, export_meals, get_profile,
+    get_pantry, get_pantry_expiring,
 )
+from modules.food_diary import compute_macro_targets
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ def _page(title: str, body: str) -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA — Diario Alimentare</header>
-<nav><a href="./">Piano</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./export.csv">Export CSV</a></nav>
+<nav><a href="./">Piano</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./export.csv">Export CSV</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=html, content_type="text/html")
 
@@ -92,9 +94,24 @@ async def _h_diary(request):
         meals = await get_meals(member, day + "T00:00:00", day + "T23:59:59")
         totals = await get_day_totals(member, day)
         hydr = await get_hydration_day(member, day)
+        p = await get_profile(member)
+        kcal_t = p.get("kcal_target") if p else None
+        macros = compute_macro_targets(kcal_t, p.get("weight_kg")) if p else None
         body += (f"<div class='card'><b>{member.capitalize()}</b> "
                  f"<span class='kcal'>{totals['kcal']} kcal</span> "
                  f"<span class='muted'>P {totals['protein_g']}g · C {totals['carbs_g']}g · G {totals['fat_g']}g · 💧 {hydr['ml_total']} ml</span>")
+        if kcal_t or macros:
+            def _vt(val, tgt, unit=""):
+                if not tgt:
+                    return f"{round(val)}{unit}"
+                delta = round(val - tgt)
+                seg = "+" if delta > 0 else ""
+                return f"{round(val)}/{round(tgt)}{unit} <span class='muted'>({seg}{delta})</span>"
+            body += ("<div class='muted' style='margin-top:6px'>vs target — "
+                     f"kcal {_vt(totals['kcal'], kcal_t)} · "
+                     f"P {_vt(totals['protein_g'], macros['protein_target_g'] if macros else None, 'g')} · "
+                     f"C {_vt(totals['carbs_g'], macros['carbs_target_g'] if macros else None, 'g')} · "
+                     f"G {_vt(totals['fat_g'], macros['fat_target_g'] if macros else None, 'g')}</div>")
         if meals:
             body += "<table><tr><th>Pasto</th><th>Descrizione</th><th>kcal</th></tr>"
             for m in sorted(meals, key=lambda x: _MEAL_ORDER.get(x['meal_type'], 9)):
@@ -111,11 +128,17 @@ async def _h_profiles(request):
         body += "<div class='card muted'>Nessun profilo. Chiedi a HARIA di impostarlo.</div>"
     else:
         body += ("<table><tr><th>Membro</th><th>Sesso</th><th>Età</th><th>Altezza</th>"
-                 "<th>Peso</th><th>BMI</th><th>Obiettivo</th><th>Attività</th><th>kcal/g</th></tr>")
+                 "<th>Peso</th><th>BMI</th><th>Obiettivo</th><th>Attività</th><th>kcal/g</th>"
+                 "<th>Prot. target</th><th>Carbo target</th><th>Grassi target</th></tr>")
         for p in profs:
+            macros = compute_macro_targets(p.get("kcal_target"), p.get("weight_kg"))
+            pt = f"{macros['protein_target_g']}g" if macros else ""
+            ct = f"{macros['carbs_target_g']}g" if macros else ""
+            gt = f"{macros['fat_target_g']}g" if macros else ""
             body += (f"<tr><td>{p['member']}</td><td>{p['sex'] or ''}</td><td>{p['age'] or ''}</td>"
                      f"<td>{p['height_cm'] or ''}</td><td>{p['weight_kg'] or ''}</td><td>{p['bmi'] or ''}</td>"
-                     f"<td>{p['goal'] or ''}</td><td>{p['activity_level'] or ''}</td><td>{p['kcal_target'] or ''}</td></tr>")
+                     f"<td>{p['goal'] or ''}</td><td>{p['activity_level'] or ''}</td><td>{p['kcal_target'] or ''}</td>"
+                     f"<td>{pt}</td><td>{ct}</td><td>{gt}</td></tr>")
         body += "</table>"
         for p in profs:
             hist = await get_weight_history(p["member"], limit=10)
@@ -145,6 +168,32 @@ async def _h_shopping(request):
     return _page("Spesa", body)
 
 
+async def _h_pantry(request):
+    items = await get_pantry()
+    exp = await get_pantry_expiring(3)
+    exp_names = {(i["name"], i["expires_on"]) for i in exp}
+    body = "<h2>Dispensa / scorte</h2>"
+    if exp:
+        body += "<div class='card'><b>⚠️ In scadenza (≤ 3 giorni)</b><table>"
+        for it in exp:
+            body += f"<tr><td>{it['name']}</td><td class='muted'>{it['qty'] or ''}</td><td class='muted'>scad. {it['expires_on']}</td></tr>"
+        body += "</table></div>"
+    if not items:
+        body += "<div class='card muted'>Dispensa vuota. Chiedi a HARIA: «aggiungi alla dispensa…».</div>"
+    else:
+        by_cat = {}
+        for it in items:
+            by_cat.setdefault(it["category"] or "Varie", []).append(it)
+        for cat, lst in by_cat.items():
+            body += f"<div class='card'><b>{cat}</b><table>"
+            for it in lst:
+                warn = "⚠️ " if (it["name"], it["expires_on"]) in exp_names else ""
+                scad = f"scad. {it['expires_on']}" if it["expires_on"] else ""
+                body += f"<tr><td>{warn}{it['name']}</td><td class='muted'>{it['qty'] or ''}</td><td class='muted'>{scad}</td></tr>"
+            body += "</table></div>"
+    return _page("Dispensa", body)
+
+
 async def _h_export(request):
     end = date.today()
     start = end - timedelta(days=30)
@@ -170,6 +219,7 @@ def build_web_app() -> web.Application:
     app.router.add_get("/diary", _h_diary)
     app.router.add_get("/profiles", _h_profiles)
     app.router.add_get("/shopping", _h_shopping)
+    app.router.add_get("/pantry", _h_pantry)
     app.router.add_get("/export.csv", _h_export)
     return app
 

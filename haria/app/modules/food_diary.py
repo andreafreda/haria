@@ -14,6 +14,7 @@ from memory import (
     add_meal, get_meals, set_plan_meal, get_meal_plan,
     get_day_totals, add_hydration, get_hydration_day,
     add_shopping_items, get_shopping_list, check_shopping_item, clear_shopping_list,
+    add_pantry_items, get_pantry, get_pantry_expiring, consume_pantry_item, clear_pantry,
 )
 import nutrition
 from ha_client import get_states, call_service
@@ -455,6 +456,58 @@ TOOLS = [
         },
     },
     {
+        "name": "add_pantry_items",
+        "description": (
+            "Aggiungi prodotti alla DISPENSA/SCORTE di casa (anti-spreco). Usa quando l'utente dice "
+            "cosa ha in casa o dopo aver fatto la spesa. Indica scadenza se nota."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "qty": {"type": "string", "description": "Quantità es. '500 g', '2 pz'"},
+                            "category": {"type": "string", "description": "Categoria es. dispensa, frigo, freezer"},
+                            "expires_on": {"type": "string", "description": "Scadenza ISO YYYY-MM-DD se nota"},
+                        },
+                        "required": ["name"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    },
+    {
+        "name": "get_pantry",
+        "description": "Leggi la dispensa/scorte. 'expiring=true' per le sole voci in scadenza entro N giorni.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Filtra per categoria"},
+                "expiring": {"type": "boolean", "description": "Solo voci in scadenza"},
+                "within_days": {"type": "integer", "description": "Giorni per 'expiring' (default 3)"},
+            },
+        },
+    },
+    {
+        "name": "consume_pantry_item",
+        "description": "Rimuovi/consuma una voce dalla dispensa per nome (quando finita o usata).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "clear_pantry",
+        "description": "Svuota completamente la dispensa.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "save_diet",
         "description": (
             "Salva una dieta di riferimento (spunto) in modo persistente ed estensibile. "
@@ -493,6 +546,8 @@ PROMPT = (
     "\n- MACRO: ogni profilo ha target macro (macro_targets in get_diet_profile/get_daily_summary). Quando pianifichi/proponi pasti tieni conto del bilancio proteine/carbo/grassi, non solo delle kcal."
     "\n- SPESA: per generare la lista della spesa, leggi il piano (get_meal_plan), GENERA tu gli ingredienti aggregati e salvali con add_shopping_items."
     " Per consultarla usa get_shopping_list, per spuntare check_shopping_item, per svuotare clear_shopping_list."
+    "\n- DISPENSA/SCORTE (anti-spreco): usa add_pantry_items per registrare cosa c'è in casa (con scadenza se nota), get_pantry per consultarla (expiring=true per voci in scadenza), consume_pantry_item quando un prodotto finisce."
+    " Quando pianifichi i pasti o generi la spesa, TIENI CONTO di cosa è già in dispensa (evita di ricomprare) e privilegia gli ingredienti in scadenza."
     "\n- CONSIGLI: quando proponi cosa cucinare, tieni conto di profili/obiettivi/allergie e privilegia ricette semplici e veloci; offri sempre alternative."
     "\n- DIETE PDF: se l'utente manda un PDF di una dieta, ESTRAI il contenuto rilevante (profilo, regole, frequenze, menù, porzioni, sostituzioni) in forma sintetica e SALVALO con save_diet (name breve descrittivo, content in markdown). Conferma e, se richiesto, riadatta il piano (plan_week) sulla nuova dieta."
 )
@@ -522,6 +577,7 @@ _MQTT_REFRESH_TOOLS = {
     "log_meal", "log_hydration", "plan_week", "set_plan_meal",
     "set_diet_profile", "log_weight", "add_shopping_items",
     "check_shopping_item", "clear_shopping_list",
+    "add_pantry_items", "consume_pantry_item", "clear_pantry",
 }
 
 
@@ -691,16 +747,51 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         target = todos[0]
         if want:
             target = next((e for e in todos if want in e.lower()), todos[0])
+        # dedup: leggi voci già presenti nella lista todo
+        existing = set()
+        try:
+            resp = await call_service("todo", "get_items", {"entity_id": target},
+                                      return_response=True)
+            sr = (resp or {}).get("service_response", {}) or {}
+            items = (sr.get(target, {}) or {}).get("items", [])
+            existing = {(i.get("summary") or "").strip().lower() for i in items}
+        except Exception:
+            pass
         added = 0
+        skipped = 0
         for it in lst:
             label = it.get("name", "")
             qty = it.get("qty")
             item = f"{label} ({qty})" if qty else label
             if not item:
                 continue
+            if item.strip().lower() in existing:
+                skipped += 1
+                continue
             await call_service("todo", "add_item", {"entity_id": target, "item": item})
+            existing.add(item.strip().lower())
             added += 1
-        return json.dumps({"ok": True, "list": target, "added": added}, ensure_ascii=False)
+        return json.dumps({"ok": True, "list": target, "added": added, "skipped": skipped},
+                          ensure_ascii=False)
+
+    if name == "add_pantry_items":
+        n = await add_pantry_items(inputs.get("items", []))
+        return json.dumps({"ok": True, "added": n}, ensure_ascii=False)
+
+    if name == "get_pantry":
+        if inputs.get("expiring"):
+            items = await get_pantry_expiring(inputs.get("within_days", 3))
+        else:
+            items = await get_pantry(inputs.get("category"))
+        return json.dumps(items, ensure_ascii=False) if items else "Dispensa vuota."
+
+    if name == "consume_pantry_item":
+        n = await consume_pantry_item(inputs["name"])
+        return json.dumps({"ok": True, "removed": n}, ensure_ascii=False)
+
+    if name == "clear_pantry":
+        n = await clear_pantry()
+        return json.dumps({"ok": True, "removed": n}, ensure_ascii=False)
 
     if name == "save_diet":
         os.makedirs(_DIET_WRITE_DIR, exist_ok=True)

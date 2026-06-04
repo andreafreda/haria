@@ -6,6 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from memory import (
     get_active_reminders, deactivate_reminder,
     get_meal_plan, get_day_totals, get_profile,
+    get_pantry_expiring,
 )
 import config as cfg
 
@@ -142,6 +143,30 @@ async def _food_weekly():
             logger.warning("Invio report settimanale a %s fallito: %s", chat_id, e)
 
 
+async def _pantry_alert():
+    """Avvisa gli utenti se ci sono scorte in scadenza entro 3 giorni."""
+    exp = await get_pantry_expiring(3)
+    if not exp:
+        return
+    lines = ["⚠️ In scadenza in dispensa:"]
+    for it in exp:
+        s = f"• {it['name']}"
+        if it.get("qty"):
+            s += f" {it['qty']}"
+        if it.get("expires_on"):
+            s += f" — scad. {it['expires_on']}"
+        lines.append(s)
+    text = "\n".join(lines)
+    for u in cfg.get("users", []):
+        chat_id = u.get("chat_id")
+        if not chat_id:
+            continue
+        try:
+            await _bot.send_message(chat_id=int(chat_id), text=text)
+        except Exception as e:
+            logger.warning("Invio alert dispensa a %s fallito: %s", chat_id, e)
+
+
 async def _mqtt_refresh():
     try:
         import mqtt_pub
@@ -171,4 +196,6 @@ def schedule_food_jobs(bot):
                        id="food_morning", replace_existing=True)
     _scheduler.add_job(_food_weekly, CronTrigger(day_of_week="sun", hour=20, minute=0),
                        id="food_weekly", replace_existing=True)
-    logger.info("Food jobs proattivi registrati (piano 08:00, report dom 20:00).")
+    _scheduler.add_job(_pantry_alert, CronTrigger(hour=8, minute=30),
+                       id="pantry_alert", replace_existing=True)
+    logger.info("Food jobs proattivi registrati (piano 08:00, scadenze 08:30, report dom 20:00).")

@@ -22,6 +22,7 @@ import config as cfg
 from memory import (
     list_profiles, get_day_totals, get_hydration_day,
     get_meal_plan, get_shopping_list, get_profile,
+    get_pantry, get_pantry_expiring,
 )
 
 logger = logging.getLogger(__name__)
@@ -190,6 +191,10 @@ async def publish_discovery():
                  icon="mdi:calendar-month", json_attr_topic=f"{_BASE}/piano_mese/attr")
     _disc_sensor("haria_spesa", "Lista spesa", f"{_BASE}/spesa/state", "voci",
                  icon="mdi:cart", json_attr_topic=f"{_BASE}/spesa/attr")
+    _disc_sensor("haria_dispensa", "Dispensa", f"{_BASE}/dispensa/state", "voci",
+                 icon="mdi:fridge", json_attr_topic=f"{_BASE}/dispensa/attr")
+    _disc_sensor("haria_dispensa_scadenze", "Dispensa in scadenza", f"{_BASE}/dispensa_scadenze/state",
+                 "voci", icon="mdi:clock-alert", json_attr_topic=f"{_BASE}/dispensa_scadenze/attr")
 
 
 async def refresh():
@@ -279,6 +284,19 @@ async def refresh():
     items = await get_shopping_list(include_checked=False)
     _pub(f"{_BASE}/spesa/state", len(items))
     _pub(f"{_BASE}/spesa/attr", {"voci": [f"{it['name']} {it.get('qty') or ''}".strip() for it in items]})
+
+    # dispensa
+    pantry = await get_pantry()
+    def _fmt_pantry(it):
+        s = f"{it['name']} {it.get('qty') or ''}".strip()
+        if it.get("expires_on"):
+            s += f" (scad. {it['expires_on']})"
+        return s
+    _pub(f"{_BASE}/dispensa/state", len(pantry))
+    _pub(f"{_BASE}/dispensa/attr", {"voci": [_fmt_pantry(it) for it in pantry]})
+    exp = await get_pantry_expiring(3)
+    _pub(f"{_BASE}/dispensa_scadenze/state", len(exp))
+    _pub(f"{_BASE}/dispensa_scadenze/attr", {"voci": [_fmt_pantry(it) for it in exp]})
 
 
 def request_refresh():

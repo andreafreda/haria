@@ -1,5 +1,6 @@
 import aiosqlite
 import os
+from datetime import date, timedelta
 
 DB_PATH = os.environ.get("DB_PATH", "/config/haria.db")
 MAX_HISTORY = 10
@@ -107,6 +108,14 @@ async def init_db():
                 category TEXT,
                 checked INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS pantry_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                qty TEXT,
+                category TEXT,
+                expires_on TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS food_cache (
                 key TEXT PRIMARY KEY,
@@ -508,6 +517,72 @@ async def clear_shopping_list(only_checked: bool = False) -> int:
             cursor = await db.execute("DELETE FROM shopping_items WHERE checked = 1")
         else:
             cursor = await db.execute("DELETE FROM shopping_items")
+        await db.commit()
+        return cursor.rowcount
+
+
+# ---- food_diary: dispensa / scorte ----
+
+async def add_pantry_items(items: list[dict]) -> int:
+    """Aggiunge voci alla dispensa. Ogni item: name, qty?, category?, expires_on?"""
+    n = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        for it in items:
+            name = (it.get("name") or "").strip()
+            if not name:
+                continue
+            await db.execute(
+                """INSERT INTO pantry_items (name, qty, category, expires_on, updated_at)
+                   VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                (name, it.get("qty"), it.get("category"), it.get("expires_on")),
+            )
+            n += 1
+        await db.commit()
+    return n
+
+
+async def get_pantry(category: str | None = None) -> list[dict]:
+    q = "SELECT id, name, qty, category, expires_on FROM pantry_items"
+    params: list = []
+    if category:
+        q += " WHERE category = ?"
+        params.append(category)
+    q += " ORDER BY (expires_on IS NULL), expires_on, name"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(q, params)
+        rows = await cursor.fetchall()
+    return [{"id": r[0], "name": r[1], "qty": r[2], "category": r[3], "expires_on": r[4]}
+            for r in rows]
+
+
+async def get_pantry_expiring(within_days: int = 3) -> list[dict]:
+    """Voci con scadenza entro N giorni (o già scadute)."""
+    limit = (date.today() + timedelta(days=within_days)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT id, name, qty, category, expires_on FROM pantry_items
+               WHERE expires_on IS NOT NULL AND expires_on <= ?
+               ORDER BY expires_on""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+    return [{"id": r[0], "name": r[1], "qty": r[2], "category": r[3], "expires_on": r[4]}
+            for r in rows]
+
+
+async def consume_pantry_item(name: str) -> int:
+    """Rimuove dalla dispensa la voce per nome (match case-insensitive)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM pantry_items WHERE LOWER(name) = ?", ((name or "").strip().lower(),)
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
+async def clear_pantry() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM pantry_items")
         await db.commit()
         return cursor.rowcount
 
