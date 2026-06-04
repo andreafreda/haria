@@ -15,7 +15,7 @@ from memory import (
     get_meal_plan, list_profiles, list_members_with_meals,
     get_meals, get_day_totals, get_hydration_day, get_shopping_list,
     get_weight_history, export_meals, get_profile,
-    get_pantry, get_pantry_expiring,
+    get_pantry, get_pantry_expiring, get_logged_days,
 )
 from modules.food_diary import compute_macro_targets
 import config as cfg
@@ -131,8 +131,19 @@ async def _h_month(request):
 
 async def _h_diary(request):
     day = request.query.get("date") or date.today().isoformat()
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        d = date.today()
+        day = d.isoformat()
+    prev = (d - timedelta(days=1)).isoformat()
+    nxt = (d + timedelta(days=1)).isoformat()
     members = await list_members_with_meals(day)
-    body = f"<h2>Diario del {day}</h2>"
+    body = (f"<h2>Diario del {day}</h2>"
+            f"<div class='muted' style='margin-bottom:10px'>"
+            f"<a href='./diary?date={prev}'>‹ {prev}</a> · "
+            f"<a href='./diary'>oggi</a> · "
+            f"<a href='./diary?date={nxt}'>{nxt} ›</a></div>")
     if not members:
         body += "<div class='card muted'>Nessun pasto registrato in questa data.</div>"
     for member in members:
@@ -163,6 +174,14 @@ async def _h_diary(request):
                 body += f"<tr><td>{m['meal_type']}</td><td>{m['description']}</td><td>{m['kcal_total'] or ''}</td></tr>"
             body += "</table>"
         body += "</div>"
+    logged = await get_logged_days(30)
+    if logged:
+        body += "<h3 style='margin-top:24px'>Storico (ultimi 30 giorni con pasti registrati)</h3>"
+        body += "<table><tr><th>Giorno</th><th>Membri</th><th>Pasti</th><th>kcal</th></tr>"
+        for ld in logged:
+            body += (f"<tr><td><a href='./diary?date={ld['day']}'>{ld['day']}</a></td>"
+                     f"<td>{ld['members']}</td><td>{ld['meals']}</td><td>{ld['kcal']}</td></tr>")
+        body += "</table>"
     return _page("Diario", body)
 
 

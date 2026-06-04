@@ -438,6 +438,23 @@ async def get_meals(member: str, date_from: str | None = None, date_to: str | No
     ]
 
 
+async def get_logged_days(days_back: int = 30) -> list[dict]:
+    """Giorni con pasti registrati negli ultimi N giorni. Ritorna [{day, members, meals, kcal}] desc."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT DATE(eaten_at) AS d,
+                      COUNT(DISTINCT member) AS members,
+                      COUNT(*) AS meals,
+                      COALESCE(SUM(kcal_total), 0) AS kcal
+               FROM meals
+               WHERE DATE(eaten_at) >= DATE('now', ?)
+               GROUP BY d ORDER BY d DESC""",
+            (f"-{int(days_back)} days",),
+        )
+        rows = await cursor.fetchall()
+    return [{"day": r[0], "members": r[1], "meals": r[2], "kcal": round(r[3], 1)} for r in rows]
+
+
 # ---- food_diary: piano settimanale ----
 
 async def set_plan_meal(date: str, meal_type: str, items: str,
