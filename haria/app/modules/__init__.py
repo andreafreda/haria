@@ -10,9 +10,9 @@ Per aggiungere un modulo: crea app/modules/<x>.py col contratto sopra e
 aggiungilo a ALL qui.
 """
 import config as cfg
-from . import agenda, websearch, food_diary, messaging
+from . import agenda, websearch, food_diary, messaging, bollette
 
-ALL = [agenda, websearch, food_diary, messaging]
+ALL = [agenda, websearch, food_diary, messaging, bollette]
 
 
 def _enabled() -> list:
