@@ -1,6 +1,14 @@
 # HARIA — TODO (livello codice)
 
-Stato: v0.1.31. Area food completa nel core. Elenco lavori residui a livello codice.
+Stato: v0.1.41. Area food completa nel core. Elenco lavori residui a livello codice.
+
+## Diario alimentare — fatto (v0.1.37→v0.1.41)
+
+- [x] **Storico diario webpanel (v0.1.37)** — `_h_diary`: nav date prev/oggi/next via `?date=`, sezione "Storico" ultimi 30gg con pasti registrati (`memory.get_logged_days`).
+- [x] **delete_meal (v0.1.38)** — `memory.delete_meal(meal_id)` (+meal_items); tool `delete_meal` in food_diary; bot cancella pasti registrati.
+- [x] **update_meal (v0.1.39)** — `memory.update_meal(meal_id,...)` UPDATE parziale; tool `update_meal`; bot corregge pasti.
+- [x] **Fix get_meals date filter (v0.1.40)** — `eaten_at` salvato con spazio (CURRENT_TIMESTAMP); confronto `>= "...T00:00:00"` escludeva tutto (spazio < `T`). Ora `DATE(eaten_at)`.
+- [x] **Diario settimana dashboard (v0.1.41)** — sensor MQTT `haria_<m>_diario_settimana` (pasti reali lun-dom, attr per giorno); card "Diario settimana" viste Andrea/Marina.
 
 ## Food — fatto (v0.1.28)
 
@@ -25,8 +33,14 @@ Stato: v0.1.31. Area food completa nel core. Elenco lavori residui a livello cod
 
 - [ ] **App Android** (fuori scope addon — client separato)
 
+## Residui aperti
+
+- [ ] **Ruotare token** (HA JWT + Telegram) prima di pubblicare repo. Differito da utente. Token attuali ancora validi/esposti in cache GitHub / cloni.
+- [ ] **Integrazione To-do/Shopping List HA** (azione UTENTE) — 0 entità `todo.*`; `sync_shopping_to_ha` pronto ma senza target.
+- [ ] **ha_chat → conversation agent nativo (Assist pipeline)** — opzionale, più complesso.
+
 ## Note tecniche
 
 - Entità food sono MQTT discovery via broker Mosquitto (`core-mosquitto`). Richiede broker attivo + integrazione MQTT.
 - `meal_plan` ora supporta override per-membro: `UNIQUE(date, meal_type, member)`, `member=''` = comune.
-- Dashboard HA: `haria-cibo` (Settimana / Mese / Spesa / Dispensa / Andrea / Marina / Chat).
+- Dashboard HA: `haria-cibo` (Settimana / Mese / Spesa / Dispensa / Andrea / Marina). Viste Andrea/Marina includono "Diario settimana".
