@@ -235,7 +235,12 @@ async def chat(user_id: str, user_text: str, user_config: dict,
         content = [
             {"type": "document", "source": {
                 "type": "base64", "media_type": doc_media_type, "data": doc_b64}},
-            {"type": "text", "text": user_text or "Questo è un PDF di una dieta. Estrai il contenuto rilevante e salvalo con save_diet."},
+            {"type": "text", "text": user_text or (
+                "PDF allegato. Classifica il tipo e agisci di conseguenza:\n"
+                "- bolletta (corrente/luce, acqua, gas): estrai utility, periodo, consumo, costo e chiama update_bill.\n"
+                "- dieta/piano alimentare: estrai il contenuto rilevante e salvalo con save_diet.\n"
+                "Se il tipo non è chiaro, chiedi all'utente prima di salvare."
+            )},
         ]
         messages = history + [{"role": "user", "content": content}]
     elif image_b64:
