@@ -43,8 +43,11 @@ async def get_states(entity_ids: list[str] | None = None) -> list[dict]:
     ]
 
 
-async def call_service(domain: str, service: str, data: dict) -> dict:
+async def call_service(domain: str, service: str, data: dict,
+                       return_response: bool = False) -> dict:
     url = f"{_base()}/api/services/{domain}/{service}"
+    if return_response:
+        url += "?return_response"
     logger.info("call_service %s/%s data=%s", domain, service, data)
     try:
         async with aiohttp.ClientSession(timeout=TIMEOUT) as session:
