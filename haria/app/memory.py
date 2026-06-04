@@ -417,6 +417,31 @@ async def add_meal(member: str, meal_type: str, description: str, totals: dict,
     return {"id": meal_id, "member": member, "meal_type": meal_type}
 
 
+async def update_meal(meal_id: int, meal_type: str | None = None, description: str | None = None,
+                      totals: dict | None = None, eaten_at: str | None = None) -> bool:
+    """Modifica un pasto registrato. Solo i campi passati vengono aggiornati. Ritorna True se modificato."""
+    sets: list[str] = []
+    params: list = []
+    if meal_type is not None:
+        sets.append("meal_type = ?"); params.append(meal_type)
+    if description is not None:
+        sets.append("description = ?"); params.append(description)
+    if eaten_at is not None:
+        sets.append("eaten_at = ?"); params.append(eaten_at)
+    if totals:
+        for col, key in (("kcal_total", "kcal_total"), ("protein_g", "protein_g"),
+                         ("carbs_g", "carbs_g"), ("fat_g", "fat_g")):
+            if totals.get(key) is not None:
+                sets.append(f"{col} = ?"); params.append(totals[key])
+    if not sets:
+        return False
+    params.append(int(meal_id))
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(f"UPDATE meals SET {', '.join(sets)} WHERE id = ?", params)
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def delete_meal(meal_id: int) -> bool:
     """Cancella un pasto registrato (e i suoi meal_items). Ritorna True se cancellato."""
     async with aiosqlite.connect(DB_PATH) as db:

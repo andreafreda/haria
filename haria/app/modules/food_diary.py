@@ -11,7 +11,7 @@ import glob
 from datetime import datetime
 from memory import (
     get_profile, upsert_profile, add_weight, get_weight_history,
-    add_meal, get_meals, delete_meal, set_plan_meal, delete_plan_meal, get_meal_plan,
+    add_meal, get_meals, delete_meal, update_meal, set_plan_meal, delete_plan_meal, get_meal_plan,
     get_day_totals, add_hydration, get_hydration_day,
     add_shopping_items, get_shopping_list, check_shopping_item, clear_shopping_list,
     set_shopping_price, get_shopping_cost,
@@ -280,6 +280,27 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "meal_id": {"type": "integer", "description": "id del pasto da get_meals"},
+            },
+            "required": ["meal_id"],
+        },
+    },
+    {
+        "name": "update_meal",
+        "description": (
+            "Modifica un pasto REGISTRATO esistente dato il suo id. Solo i campi forniti vengono cambiati. "
+            "Prima chiama get_meals per trovare l'id. Usa per correggere descrizione, tipo, calorie/macro o data/ora."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "meal_id": {"type": "integer", "description": "id del pasto da get_meals"},
+                "meal_type": {"type": "string", "enum": ["colazione", "pranzo", "cena", "snack"]},
+                "description": {"type": "string"},
+                "kcal_total": {"type": "number"},
+                "protein_g": {"type": "number"},
+                "carbs_g": {"type": "number"},
+                "fat_g": {"type": "number"},
+                "eaten_at": {"type": "string", "description": "ISO date/datetime"},
             },
             "required": ["meal_id"],
         },
@@ -633,7 +654,7 @@ async def _recompute_profile_derived(member: str) -> dict | None:
 
 
 _MQTT_REFRESH_TOOLS = {
-    "log_meal", "delete_meal", "log_hydration", "plan_week", "set_plan_meal", "delete_plan_meal",
+    "log_meal", "delete_meal", "update_meal", "log_hydration", "plan_week", "set_plan_meal", "delete_plan_meal",
     "set_diet_profile", "log_weight", "add_shopping_items",
     "check_shopping_item", "clear_shopping_list", "set_shopping_price",
     "add_pantry_items", "consume_pantry_item", "clear_pantry",
@@ -714,6 +735,12 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
 
     if name == "delete_meal":
         ok = await delete_meal(int(inputs["meal_id"]))
+        return json.dumps({"ok": ok, "meal_id": inputs["meal_id"]}, ensure_ascii=False)
+
+    if name == "update_meal":
+        totals = {k: inputs[k] for k in ("kcal_total", "protein_g", "carbs_g", "fat_g") if k in inputs}
+        ok = await update_meal(int(inputs["meal_id"]), inputs.get("meal_type"),
+                               inputs.get("description"), totals or None, inputs.get("eaten_at"))
         return json.dumps({"ok": ok, "meal_id": inputs["meal_id"]}, ensure_ascii=False)
 
     if name == "plan_week":
