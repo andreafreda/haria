@@ -11,7 +11,7 @@ import glob
 from datetime import datetime
 from memory import (
     get_profile, upsert_profile, add_weight, get_weight_history,
-    add_meal, get_meals, set_plan_meal, get_meal_plan,
+    add_meal, get_meals, set_plan_meal, delete_plan_meal, get_meal_plan,
     get_day_totals, add_hydration, get_hydration_day,
     add_shopping_items, get_shopping_list, check_shopping_item, clear_shopping_list,
     add_pantry_items, get_pantry, get_pantry_expiring, consume_pantry_item, clear_pantry,
@@ -333,6 +333,23 @@ TOOLS = [
         },
     },
     {
+        "name": "delete_plan_meal",
+        "description": (
+            "Elimina UN pasto dal piano. Senza 'member' = rimuove il pasto COMUNE. "
+            "Con 'member' = rimuove SOLO l'override personale di quella persona (lascia intatto il comune). "
+            "Usa per cancellare uno snack/pasto duplicato o non voluto."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "description": "Data ISO YYYY-MM-DD"},
+                "meal_type": {"type": "string", "enum": ["colazione", "pranzo", "cena", "snack"]},
+                "member": {"type": "string", "description": "Nome persona per rimuovere l'override personale; ometti per il piano comune"},
+            },
+            "required": ["date", "meal_type"],
+        },
+    },
+    {
         "name": "get_daily_summary",
         "description": (
             "Riepilogo nutrizionale giornaliero di un membro: kcal e macro consumati vs fabbisogno (kcal_target), "
@@ -575,7 +592,7 @@ async def _recompute_profile_derived(member: str) -> dict | None:
 
 
 _MQTT_REFRESH_TOOLS = {
-    "log_meal", "log_hydration", "plan_week", "set_plan_meal",
+    "log_meal", "log_hydration", "plan_week", "set_plan_meal", "delete_plan_meal",
     "set_diet_profile", "log_weight", "add_shopping_items",
     "check_shopping_item", "clear_shopping_list",
     "add_pantry_items", "consume_pantry_item", "clear_pantry",
@@ -676,6 +693,12 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
             inputs.get("member"),
         )
         return json.dumps({"ok": True, "date": inputs["date"], "meal_type": inputs["meal_type"],
+                           "member": inputs.get("member") or "comune"}, ensure_ascii=False)
+
+    if name == "delete_plan_meal":
+        n = await delete_plan_meal(inputs["date"], inputs["meal_type"], inputs.get("member"))
+        return json.dumps({"ok": n > 0, "deleted": n, "date": inputs["date"],
+                           "meal_type": inputs["meal_type"],
                            "member": inputs.get("member") or "comune"}, ensure_ascii=False)
 
     if name == "get_daily_summary":

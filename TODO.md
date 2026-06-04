@@ -23,9 +23,7 @@ Stato: v0.1.31. Area food completa nel core. Elenco lavori residui a livello cod
 - [x] **ha_chat (v0.1.30)** — chat web in `webpanel.py`: pagina `/chat` (UI JS) + `POST /api/chat` → `claude_engine.chat`. Nav "Chat" + vista HA "Chat" (iframe ingress). `web_server.py` morto rimosso.
   - TODO opzionale: integrazione conversation agent nativo HA (Assist pipeline) — più complesso, non fatto.
 
-- [ ] **Rimozione secret dal repo (BLOCCANTE per pubblicazione HACS)**
-  - Prima di rendere pubblico/HACS: togliere chiavi/token da config, history, eventuali file committati.
-  - Audit: `config.yaml` options vuote (ok), verificare nessun secret in commit passati.
+- [x] **Rimozione secret dal repo (v0.1.32)** — `.claude/settings.local.json` (HA JWT + Telegram token) rimosso da working tree + `.gitignore`, purgato da TUTTA la history via `git filter-repo --invert-paths`, force-push `main`. Verificato: file e token assenti da `git log --all`. NB: token NON ruotati (scelta utente) — restano validi e potenzialmente in cache GitHub / cloni esistenti.
 
 - [ ] **App Android** (fuori scope addon — client separato)
 

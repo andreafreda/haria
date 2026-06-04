@@ -460,6 +460,21 @@ async def set_plan_meal(date: str, meal_type: str, items: str,
         await db.commit()
 
 
+async def delete_plan_meal(date: str, meal_type: str, member: str | None = None) -> int:
+    """Elimina un pasto del piano (chiave date+meal_type+member).
+
+    member vuoto/None = piano comune. Ritorna numero righe eliminate.
+    """
+    member = (member or "").strip().lower()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM meal_plan WHERE date = ? AND meal_type = ? AND member = ?",
+            (date, meal_type, member),
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
 async def get_meal_plan(date_from: str, date_to: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
