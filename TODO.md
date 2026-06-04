@@ -1,6 +1,10 @@
 # HARIA — TODO (livello codice)
 
-Stato: v0.1.43. Agenda unificata (promemoria+task+calendar). Area food completa. Lavori residui sotto.
+Stato: v0.1.44. Agenda unificata + import bollette PDF. Area food completa. Lavori residui sotto.
+
+## Bollette PDF → dashboard Consumi — fatto (v0.1.44)
+
+- [x] **Modulo `bollette`** — tool `update_bill(utility, year, month_start, month_end?, consumo?, costo?)`. Utente manda PDF al bot; Claude legge il documento (già passato come doc_b64) ed estrae dati; update_bill riusa gli script HA `script.salva_consumi_<u>`/`script.salva_costo_<u>` settando i helper input_select/input_number. Toggle `modules.bollette`.
 
 ## Agenda unificata — fatto (v0.1.43)
 
