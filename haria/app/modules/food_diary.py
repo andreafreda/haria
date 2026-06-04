@@ -133,6 +133,36 @@ def compute_kcal_target(sex: str, age: int, height_cm: float, weight_kg: float,
     return int(round(tdee))
 
 
+def compute_macro_targets(kcal_target: int | None, weight_kg: float | None) -> dict | None:
+    """Ripartizione macro dal target kcal.
+
+    Proteine 1.6 g/kg (fallback 20% kcal se peso assente); grassi 25% kcal;
+    carboidrati il resto. Ritorna grammi + % di ogni macro.
+    """
+    if not kcal_target:
+        return None
+    if weight_kg:
+        protein_g = round(1.6 * weight_kg, 1)
+    else:
+        protein_g = round((0.20 * kcal_target) / 4, 1)
+    protein_kcal = protein_g * 4
+    fat_kcal = 0.25 * kcal_target
+    fat_g = round(fat_kcal / 9, 1)
+    carbs_kcal = kcal_target - protein_kcal - fat_kcal
+    if carbs_kcal < 0:
+        carbs_kcal = 0
+    carbs_g = round(carbs_kcal / 4, 1)
+    pct = lambda k: round(100 * k / kcal_target, 1) if kcal_target else None
+    return {
+        "protein_target_g": protein_g,
+        "carbs_target_g": carbs_g,
+        "fat_target_g": fat_g,
+        "protein_pct": pct(protein_kcal),
+        "carbs_pct": pct(carbs_kcal),
+        "fat_pct": pct(fat_kcal),
+    }
+
+
 TOOLS = [
     {
         "name": "set_diet_profile",
@@ -452,7 +482,8 @@ PROMPT = (
     " Se l'utente vuole cambiare un pasto, PROPONI 2-3 alternative coerenti; quando sceglie, salva con set_plan_meal."
     "\n- VALORI NUTRIZIONALI: prima di stimare kcal/macro a memoria, prova lookup_nutrition per dati reali (cache locale)."
     " Per prodotti confezionati col codice a barre usa lookup_barcode. Se la fonte non risponde, stima tu."
-    "\n- RIEPILOGO: per 'quanto ho mangiato/quante calorie restano' usa get_daily_summary. Per l'acqua usa log_hydration/get_hydration."
+    "\n- RIEPILOGO: per 'quanto ho mangiato/quante calorie restano' usa get_daily_summary: riporta sia kcal sia MACRO (proteine/carbo/grassi) consumati vs target e rimanenti."
+    "\n- MACRO: ogni profilo ha target macro (macro_targets in get_diet_profile/get_daily_summary). Quando pianifichi/proponi pasti tieni conto del bilancio proteine/carbo/grassi, non solo delle kcal."
     "\n- SPESA: per generare la lista della spesa, leggi il piano (get_meal_plan), GENERA tu gli ingredienti aggregati e salvali con add_shopping_items."
     " Per consultarla usa get_shopping_list, per spuntare check_shopping_item, per svuotare clear_shopping_list."
     "\n- CONSIGLI: quando proponi cosa cucinare, tieni conto di profili/obiettivi/allergie e privilegia ricette semplici e veloci; offri sempre alternative."
@@ -500,6 +531,9 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         if not p:
             return f"Nessun profilo per '{member}'. Usa set_diet_profile per crearlo."
         p["bmi_category"] = bmi_category(p.get("bmi"))
+        macros = compute_macro_targets(p.get("kcal_target"), p.get("weight_kg"))
+        if macros:
+            p["macro_targets"] = macros
         return json.dumps(p, ensure_ascii=False)
 
     if name == "log_weight":
@@ -567,9 +601,18 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         p = await get_profile(member)
         target = p.get("kcal_target") if p else None
         remaining = round(target - totals["kcal"], 1) if target else None
+        macros = compute_macro_targets(target, p.get("weight_kg")) if p else None
+        macro_remaining = None
+        if macros:
+            macro_remaining = {
+                "protein_g": round(macros["protein_target_g"] - totals["protein_g"], 1),
+                "carbs_g": round(macros["carbs_target_g"] - totals["carbs_g"], 1),
+                "fat_g": round(macros["fat_target_g"] - totals["fat_g"], 1),
+            }
         return json.dumps({
             "member": member, "date": day, "consumed": totals,
             "kcal_target": target, "kcal_remaining": remaining,
+            "macro_targets": macros, "macro_remaining": macro_remaining,
             "hydration_ml": hydr["ml_total"],
         }, ensure_ascii=False)
 
