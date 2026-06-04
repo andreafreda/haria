@@ -6,6 +6,8 @@ macro), così non serve una seconda chiamata API. BMI e fabbisogno calorico
 sono calcolati in Python (deterministici).
 """
 import json
+import os
+import glob
 from datetime import datetime
 from memory import (
     get_profile, upsert_profile, add_weight, get_weight_history,
@@ -32,6 +34,53 @@ ACTIVITY_FACTORS = {
 
 def _norm(member: str) -> str:
     return (member or "").strip().lower()
+
+
+# Diete di riferimento ("spunto"): caricate da repo (app/diets) + cartella
+# persistente FTP-accessibile (/config/haria_diets). Estendibile senza codice:
+# basta aggiungere file .md/.txt in /config/haria_diets.
+_DIET_DIRS = [
+    os.path.join(os.path.dirname(__file__), "..", "diets"),
+    os.environ.get("DIETS_PATH", "/config/haria_diets"),
+]
+_DIET_EXTS = ("*.md", "*.txt")
+
+
+def load_diets() -> str:
+    """Concatena il contenuto di tutte le diete di riferimento trovate."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    for d in _DIET_DIRS:
+        if not d or not os.path.isdir(d):
+            continue
+        files = sorted(f for ext in _DIET_EXTS for f in glob.glob(os.path.join(d, ext)))
+        for f in files:
+            base = os.path.basename(f)
+            if base in seen:
+                continue
+            seen.add(base)
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    txt = fh.read().strip()
+                if txt:
+                    parts.append(f"### {base}\n{txt}")
+            except OSError:
+                continue
+    return "\n\n".join(parts)
+
+
+def diet_prompt() -> str:
+    """Frammento system prompt con le diete di riferimento (vuoto se assenti)."""
+    diets = load_diets()
+    if not diets:
+        return ""
+    return (
+        "\n\n=== DIETE DI RIFERIMENTO (spunto, non vincolo) ===\n"
+        "Le seguenti diete passate dell'utente servono da ISPIRAZIONE per proporre "
+        "e variare i piani pasti: rispettane stile, regole, frequenze e porzioni "
+        "quando generi menù con plan_week/set_plan_meal. Non sono un piano attivo "
+        "rigido salvo richiesta esplicita.\n\n" + diets
+    )
 
 
 def compute_bmi(weight_kg: float, height_cm: float) -> float | None:
@@ -360,6 +409,8 @@ PROMPT = (
     " Per consultarla usa get_shopping_list, per spuntare check_shopping_item, per svuotare clear_shopping_list."
     "\n- CONSIGLI: quando proponi cosa cucinare, tieni conto di profili/obiettivi/allergie e privilegia ricette semplici e veloci; offri sempre alternative."
 )
+
+PROMPT += diet_prompt()
 
 
 async def _recompute_profile_derived(member: str) -> dict | None:
