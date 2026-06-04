@@ -1,6 +1,14 @@
 # HARIA — TODO (livello codice)
 
-Stato: v0.1.41. Area food completa nel core. Elenco lavori residui a livello codice.
+Stato: v0.1.43. Agenda unificata (promemoria+task+calendar). Area food completa. Lavori residui sotto.
+
+## Agenda unificata — fatto (v0.1.43)
+
+- [x] **Modulo `agenda`** — unisce `reminders`+`todo`+calendar in un solo modulo/toggle. Rimossi `reminders`/`todo` da ALL (file orfani restano). `config.yaml modules.agenda`.
+- [x] **Calendar HA** — creati `calendar.haria_andrea`/`calendar.haria_marina` (local_calendar via config-flow REST). `add_event`/`get_events`: multi-owner = evento su ogni calendario owner; nessun owner = tutti (famiglia).
+- [x] **Multi-owner task** — `add_task` accetta `owners[]` (lista), folded in description "👤 a, b".
+- [x] **`agenda_overview`** — vista unica reminder+task aperti+eventi prossimi → fine desync tra i 3 mondi.
+- [x] **Dashboard `haria-agenda`** — view condivisa: calendar card (settimana+mese, entrambi calendari) + todo card (cose da fare/promemoria/spesa).
 
 ## Diario alimentare — fatto (v0.1.37→v0.1.41)
 
