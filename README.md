@@ -132,8 +132,9 @@ Ogni modulo è on/off da `config.modules`.
 - **`agenda_overview`** — vista unica reminder + task aperti + eventi prossimi.
 
 ### `food_diary` — diario alimentare famigliare
-Diario + pianificazione + dieta per tutta la famiglia. Cross-user: un genitore può
-loggare per la bimba o per Marina ("Marina ha mangiato…"); default = chi scrive.
+Diario + pianificazione + dieta per tutta la famiglia. Cross-user: un membro può
+loggare per un altro ("Marina ha mangiato…"); default = chi scrive. I membri senza
+chat_id Telegram esistono solo come profilo, gestiti da chi li configura.
 - **Profili** nutrizionali per membro (`set_diet_profile`/`get_diet_profile`/`delete_profile`):
   età/sesso/altezza/peso/obiettivo/attività/allergie/preferenze; calcola **BMI** e
   **kcal_target** (BMR Mifflin-St Jeor × attività × obiettivo).
@@ -161,9 +162,14 @@ loggare per la bimba o per Marina ("Marina ha mangiato…"); default = chi scriv
 
 ### `bollette` — consumi/costi utenze
 Utente manda il **PDF** della bolletta (corrente/acqua/gas); Claude estrae utility, periodo,
-consumo, costo → `update_bill` scrive nei CSV mensili riusando gli script HA
-(`script.salva_consumi_*`/`salva_costo_*`). **Dedup**: se il periodo è già registrato ritorna
-i valori esistenti e chiede conferma prima di sovrascrivere (`confirm=true`).
+consumo, costo → `update_bill` scrive nei CSV mensili riusando script HA
+(`script.salva_consumi_*`/`salva_costo_*`) e helper input_select/input_number.
+**Dedup**: se il periodo è già registrato ritorna i valori esistenti e chiede conferma
+prima di sovrascrivere (`confirm=true`).
+
+> Gli script HA e gli helper usati da questo modulo **non sono inclusi nel repository**
+> (sono specifici della propria installazione/dashboard Consumi): vanno creati lato HA e
+> possono essere personalizzati a piacimento (nomi entità/script, struttura CSV).
 
 ### `web_search` — ricerca web
 `search_web` via DuckDuckGo (`ddgs`) per informazioni in tempo reale.
@@ -304,14 +310,12 @@ La versione è in `haria/config.yaml` (`version:`), va bumpata a ogni release.
 ## Roadmap / residui
 
 **Sicurezza / robustezza**
-- Ruotare token HA/Telegram prima di pubblicare il repo (differito).
 - Allowlist `control_device` (oggi Claude può chiamare qualsiasi servizio HA).
 - Test automatici (oggi solo `py_compile`).
 - TTL su `food_cache`.
 
 **Food**
 - Micronutrienti (fibre, zuccheri, saturi, sodio, vitamine/minerali) — schema previsto, non popolato.
-- Percentili crescita bimba (ora BMI adulto per tutti).
 - Controllo allergie hard (oggi solo via ragionamento prompt).
 - Pannello web interattivo (oggi sola-lettura): check-off spesa, edit profili, grafici.
 
