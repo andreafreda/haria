@@ -3,7 +3,9 @@ import os
 from datetime import date, timedelta
 
 DB_PATH = os.environ.get("DB_PATH", "/config/haria.db")
-MAX_HISTORY = 10
+MAX_HISTORY = 10          # turni raw inviati a ogni richiesta
+SUMMARY_BATCH = 20        # turni vecchi piegati nel summary per giro
+_FTS_OK = False           # FTS5 disponibile (settato in init_db)
 
 
 async def init_db():
@@ -123,6 +125,11 @@ async def init_db():
                 source TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS conv_summary (
+                user_id TEXT PRIMARY KEY,
+                summary TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         # migrazioni leggere: aggiungi colonne se mancano
         for table, col, ddl in [
@@ -156,6 +163,29 @@ async def init_db():
                 DROP TABLE meal_plan;
                 ALTER TABLE meal_plan_new RENAME TO meal_plan;
             """)
+        # FTS5 per recall keyword su note + conversazioni (best-effort: se il
+        # build sqlite non ha FTS5, recall degrada a vuoto senza rompere nulla).
+        global _FTS_OK
+        try:
+            await db.executescript("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+                    user_id UNINDEXED, kind UNINDEXED, content
+                );
+            """)
+            # backfill una tantum (tabella vuota = primo avvio con FTS)
+            cur = await db.execute("SELECT count(*) FROM memory_fts")
+            if (await cur.fetchone())[0] == 0:
+                await db.execute(
+                    "INSERT INTO memory_fts (user_id, kind, content) "
+                    "SELECT user_id, 'conv', content FROM conversations"
+                )
+                await db.execute(
+                    "INSERT INTO memory_fts (user_id, kind, content) "
+                    "SELECT user_id, 'note', key || ': ' || value FROM notes"
+                )
+            _FTS_OK = True
+        except Exception:
+            _FTS_OK = False
         await db.commit()
 
 
@@ -177,13 +207,103 @@ async def save_turn(user_id: str, role: str, content: str):
             "INSERT INTO conversations (user_id, role, content) VALUES (?, ?, ?)",
             (user_id, role, content),
         )
+        if _FTS_OK and content:
+            await db.execute(
+                "INSERT INTO memory_fts (user_id, kind, content) VALUES (?, 'conv', ?)",
+                (user_id, content),
+            )
         await db.commit()
 
 
 async def clear_history(user_id: str):
+    """Cancella history raw + summary dell'utente. FTS resta (recall storico)."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM conv_summary WHERE user_id = ?", (user_id,))
         await db.commit()
+
+
+# ---- memoria a lungo termine: summary conversazione ----
+
+async def count_history(user_id: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT count(*) FROM conversations WHERE user_id = ?", (user_id,)
+        )
+        return (await cur.fetchone())[0]
+
+
+async def get_summary(user_id: str) -> str | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT summary FROM conv_summary WHERE user_id = ?", (user_id,)
+        )
+        row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def set_summary(user_id: str, summary: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO conv_summary (user_id, summary, updated_at)
+               VALUES (?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id) DO UPDATE SET
+                   summary=excluded.summary, updated_at=CURRENT_TIMESTAMP""",
+            (user_id, summary),
+        )
+        await db.commit()
+
+
+async def get_old_turns(user_id: str, keep: int = MAX_HISTORY,
+                        batch: int = SUMMARY_BATCH) -> list[dict]:
+    """Turni più vecchi della finestra recente `keep`, dal più vecchio.
+    Ritorna [{id, role, content}] (max `batch`). Vuoto se niente da riassumere."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """SELECT id, role, content FROM conversations
+               WHERE user_id = ? AND id NOT IN (
+                   SELECT id FROM conversations WHERE user_id = ?
+                   ORDER BY id DESC LIMIT ?
+               )
+               ORDER BY id ASC LIMIT ?""",
+            (user_id, user_id, keep, batch),
+        )
+        rows = await cur.fetchall()
+    return [{"id": i, "role": r, "content": c} for i, r, c in rows]
+
+
+async def delete_turns(ids: list[int]):
+    if not ids:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.executemany(
+            "DELETE FROM conversations WHERE id = ?", [(i,) for i in ids]
+        )
+        await db.commit()
+
+
+async def search_memory(user_id: str, query: str, limit: int = 5) -> list[str]:
+    """Recall keyword via FTS5 su note + conversazioni passate dell'utente.
+    Ritorna snippet di contenuto. Vuoto se FTS assente o nessun match."""
+    if not _FTS_OK:
+        return []
+    import re
+    terms = re.findall(r"\w+", (query or "").lower())
+    if not terms:
+        return []
+    match = " OR ".join(terms)
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            cur = await db.execute(
+                """SELECT content FROM memory_fts
+                   WHERE user_id = ? AND memory_fts MATCH ?
+                   ORDER BY rank LIMIT ?""",
+                (user_id, match, limit),
+            )
+            rows = await cur.fetchall()
+        except Exception:
+            return []
+    return [r[0] for r in rows]
 
 
 async def get_notes(user_id: str) -> dict[str, str]:
@@ -203,6 +323,11 @@ async def save_note(user_id: str, key: str, value: str):
                ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP""",
             (user_id, key, value),
         )
+        if _FTS_OK:
+            await db.execute(
+                "INSERT INTO memory_fts (user_id, kind, content) VALUES (?, 'note', ?)",
+                (user_id, f"{key}: {value}"),
+            )
         await db.commit()
 
 

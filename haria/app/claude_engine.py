@@ -7,6 +7,9 @@ from ha_client import get_states, call_service
 from memory import (
     get_history, save_turn, get_notes, save_note,
     get_entity_cache, save_entity_cache, clear_entity_cache,
+    get_summary, set_summary, get_old_turns, delete_turns,
+    count_history, search_memory,
+    MAX_HISTORY, SUMMARY_BATCH,
 )
 import modules
 import config as cfg
@@ -77,6 +80,21 @@ CORE_TOOLS = [
                 "message": {"type": "string", "description": "Testo da pronunciare"},
             },
             "required": ["media_player", "message"],
+        },
+    },
+    {
+        "name": "recall",
+        "description": (
+            "Cerca nella memoria a lungo termine (note salvate + conversazioni passate) "
+            "per ricordare fatti vecchi non presenti nel contesto recente. Usa quando "
+            "l'utente fa riferimento a qualcosa di detto tempo fa che non vedi nella cronologia."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Parole chiave da cercare (es. 'medico cardiologo', 'password wifi')"},
+            },
+            "required": ["query"],
         },
     },
     {
@@ -158,6 +176,9 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
                 {"ok": False, "error": str(last_error), "device": mp},
                 ensure_ascii=False,
             )
+        if name == "recall":
+            hits = await search_memory(user_id, inputs.get("query", ""), limit=5)
+            return json.dumps(hits, ensure_ascii=False) if hits else "Nessun ricordo trovato."
         if name == "respond":
             return "__respond__"
         # tool dei moduli abilitati (reminders, web_search, ...)
@@ -172,7 +193,7 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
         return f"Errore nel tool {name}: {e}"
 
 
-async def _build_system(user_config: dict) -> list[dict]:
+async def _build_system(user_id: str, user_config: dict) -> list[dict]:
     name = user_config.get("name", "Utente")
     context = user_config.get("context", "")
     base = (
@@ -200,6 +221,17 @@ async def _build_system(user_config: dict) -> list[dict]:
     if context:
         base += f"\n\nContesto utente: {context}"
 
+    # Memoria a lungo termine: note salvate (auto-recall) + riassunto conversazioni vecchie.
+    notes = await get_notes(user_id)
+    if notes:
+        note_lines = "\n".join(f"- {k}: {v}" for k, v in notes.items())
+        base += ("\n\nMEMORIA UTENTE (note salvate, usale senza chiamare get_memory):\n"
+                 + note_lines)
+    summary = await get_summary(user_id)
+    if summary:
+        base += ("\n\nRIASSUNTO CONVERSAZIONI PRECEDENTI (contesto storico, non più nei messaggi):\n"
+                 + summary)
+
     # Stable prefix cached; volatile datetime in separate uncached block.
     from datetime import timedelta
     now = datetime.now()
@@ -225,9 +257,44 @@ async def _build_system(user_config: dict) -> list[dict]:
     ]
 
 
+async def _maybe_summarize(user_id: str):
+    """Se la history supera la finestra recente + batch, piega i turni vecchi in un
+    riassunto (1 chiamata Haiku) e li rimuove dalla history raw. Best-effort."""
+    try:
+        if await count_history(user_id) <= MAX_HISTORY + SUMMARY_BATCH:
+            return
+        old = await get_old_turns(user_id)
+        if not old:
+            return
+        prev = await get_summary(user_id)
+        convo = "\n".join(f"{t['role']}: {t['content']}" for t in old)
+        sys = (
+            "Aggiorna il riassunto della memoria di una conversazione assistente-utente. "
+            "Conserva fatti durevoli: preferenze, nomi, decisioni, dati personali, impegni. "
+            "Scarta chiacchiere effimere. Italiano, conciso, massimo ~200 parole."
+        )
+        user_msg = (
+            (f"Riassunto esistente:\n{prev}\n\n" if prev else "")
+            + f"Nuovi scambi da integrare:\n{convo}\n\nRiassunto aggiornato:"
+        )
+        resp = await client.messages.create(
+            model=MODEL, max_tokens=400,
+            system=sys,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        new_summary = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+        if new_summary:
+            await set_summary(user_id, new_summary)
+            await delete_turns([t["id"] for t in old])
+            logger.info("Summary memoria aggiornato per %s (%d turni piegati)", user_id, len(old))
+    except Exception as e:
+        logger.warning("Summarize memoria fallito per %s: %s", user_id, e)
+
+
 async def chat(user_id: str, user_text: str, user_config: dict,
                image_b64: str | None = None, image_media_type: str = "image/jpeg",
                doc_b64: str | None = None, doc_media_type: str = "application/pdf") -> str:
+    await _maybe_summarize(user_id)
     history = await get_history(user_id)
     placeholder = "[foto]" if image_b64 else ("[pdf]" if doc_b64 else None)
     await save_turn(user_id, "user", user_text or placeholder or "")
@@ -253,7 +320,7 @@ async def chat(user_id: str, user_text: str, user_config: dict,
         messages = history + [{"role": "user", "content": content}]
     else:
         messages = history + [{"role": "user", "content": user_text}]
-    system = await _build_system(user_config)
+    system = await _build_system(user_id, user_config)
 
     MAX_TURNS = 8
     try:
