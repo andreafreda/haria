@@ -177,6 +177,8 @@ async def publish_discovery():
                  icon="mdi:silverware-fork-knife", json_attr_topic=f"{_BASE}/piano_oggi/attr")
     _disc_sensor("haria_piano_settimana", "Piano settimana", f"{_BASE}/piano_settimana/state",
                  icon="mdi:calendar-week", json_attr_topic=f"{_BASE}/piano_settimana/attr")
+    _disc_sensor("haria_piano_mese", "Piano mese", f"{_BASE}/piano_mese/state",
+                 icon="mdi:calendar-month", json_attr_topic=f"{_BASE}/piano_mese/attr")
     _disc_sensor("haria_spesa", "Lista spesa", f"{_BASE}/spesa/state", "voci",
                  icon="mdi:cart", json_attr_topic=f"{_BASE}/spesa/attr")
 
@@ -235,6 +237,30 @@ async def refresh():
         ) if ms else ""
     _pub(f"{_BASE}/piano_settimana/state", f"{len(wplan)} pasti")
     _pub(f"{_BASE}/piano_settimana/attr", giorni)
+
+    # piano mese (1 -> ultimo giorno mese corrente)
+    today_d = date.today()
+    first = today_d.replace(day=1)
+    if first.month == 12:
+        nxt = first.replace(year=first.year + 1, month=1)
+    else:
+        nxt = first.replace(month=first.month + 1)
+    last = nxt - timedelta(days=1)
+    mdays = [(first + timedelta(days=i)) for i in range((last - first).days + 1)]
+    mplan = await get_meal_plan(first.isoformat(), last.isoformat())
+    by_day_m = {}
+    for mm in mplan:
+        by_day_m.setdefault(mm["date"], []).append(mm)
+    mesi = {}
+    for d in mdays:
+        iso = d.isoformat()
+        ms = sorted(by_day_m.get(iso, []),
+                    key=lambda x: (_MEAL_ORDER.get(x["meal_type"], 9), x.get("member") or ""))
+        mesi[iso] = "; ".join(
+            f"{x['meal_type']}: {_fmt_plan_item(x)}" for x in ms
+        ) if ms else ""
+    _pub(f"{_BASE}/piano_mese/state", f"{len(mplan)} pasti")
+    _pub(f"{_BASE}/piano_mese/attr", mesi)
 
     # spesa
     items = await get_shopping_list(include_checked=False)
