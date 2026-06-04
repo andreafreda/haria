@@ -6,7 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from memory import (
     get_active_reminders, deactivate_reminder,
     get_meal_plan, get_day_totals, get_profile,
-    get_pantry_expiring,
+    get_pantry_expiring, get_shopping_cost,
 )
 import config as cfg
 
@@ -119,6 +119,10 @@ async def _food_weekly():
     """Report settimanale: media kcal/giorno per membro."""
     end = date.today()
     start = end - timedelta(days=6)
+    cost = await get_shopping_cost(include_checked=True)
+    cost_line = ""
+    if cost["count"] and cost["priced"]:
+        cost_line = f"\n🛒 Spesa attuale: €{cost['total']:.2f} ({cost['priced']}/{cost['count']} voci con prezzo)."
     for u in cfg.get("users", []):
         chat_id = u.get("chat_id")
         member = (u.get("name") or "").strip().lower()
@@ -137,6 +141,7 @@ async def _food_weekly():
             delta = avg - target
             verso = "sopra" if delta > 0 else "sotto"
             txt += f"\nObiettivo {target} kcal → {abs(delta)} kcal {verso} di media."
+        txt += cost_line
         try:
             await _bot.send_message(chat_id=int(chat_id), text=txt)
         except Exception as e:

@@ -14,6 +14,7 @@ from memory import (
     add_meal, get_meals, set_plan_meal, delete_plan_meal, get_meal_plan,
     get_day_totals, add_hydration, get_hydration_day,
     add_shopping_items, get_shopping_list, check_shopping_item, clear_shopping_list,
+    set_shopping_price, get_shopping_cost,
     add_pantry_items, get_pantry, get_pantry_expiring, consume_pantry_item, clear_pantry,
 )
 import nutrition
@@ -426,6 +427,7 @@ TOOLS = [
                             "name": {"type": "string"},
                             "qty": {"type": "string", "description": "Quantità (es. '500 g', '2 pz')"},
                             "category": {"type": "string", "description": "Reparto (es. verdura, carne, dispensa)"},
+                            "price": {"type": "number", "description": "Prezzo stimato in € della voce (opzionale)"},
                         },
                         "required": ["name"],
                     },
@@ -437,6 +439,29 @@ TOOLS = [
     {
         "name": "get_shopping_list",
         "description": "Leggi la lista della spesa attuale (voci non ancora prese, salvo include_checked).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"include_checked": {"type": "boolean"}},
+        },
+    },
+    {
+        "name": "set_shopping_price",
+        "description": "Imposta/aggiorna il prezzo (€) di una voce della lista spesa (per nome, match parziale).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "price": {"type": "number", "description": "Prezzo in €"},
+            },
+            "required": ["name", "price"],
+        },
+    },
+    {
+        "name": "get_shopping_cost",
+        "description": (
+            "Costo totale stimato della lista spesa (somma prezzi). Usa per 'quanto spendo', "
+            "'totale spesa'. include_checked=false per contare solo le voci ancora da prendere."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {"include_checked": {"type": "boolean"}},
@@ -564,6 +589,7 @@ PROMPT = (
     "\n- MACRO: ogni profilo ha target macro (macro_targets in get_diet_profile/get_daily_summary). Quando pianifichi/proponi pasti tieni conto del bilancio proteine/carbo/grassi, non solo delle kcal."
     "\n- SPESA: per generare la lista della spesa, leggi il piano (get_meal_plan), GENERA tu gli ingredienti aggregati e salvali con add_shopping_items."
     " Per consultarla usa get_shopping_list, per spuntare check_shopping_item, per svuotare clear_shopping_list."
+    " COSTI: puoi indicare 'price' (€) nelle voci di add_shopping_items, o impostarlo dopo con set_shopping_price; get_shopping_cost dà il totale stimato."
     "\n- DISPENSA/SCORTE (anti-spreco): usa add_pantry_items per registrare cosa c'è in casa (con scadenza se nota), get_pantry per consultarla (expiring=true per voci in scadenza), consume_pantry_item quando un prodotto finisce."
     " Quando pianifichi i pasti o generi la spesa, TIENI CONTO di cosa è già in dispensa (evita di ricomprare) e privilegia gli ingredienti in scadenza."
     "\n- CONSIGLI: quando proponi cosa cucinare, tieni conto di profili/obiettivi/allergie e privilegia ricette semplici e veloci; offri sempre alternative."
@@ -594,7 +620,7 @@ async def _recompute_profile_derived(member: str) -> dict | None:
 _MQTT_REFRESH_TOOLS = {
     "log_meal", "log_hydration", "plan_week", "set_plan_meal", "delete_plan_meal",
     "set_diet_profile", "log_weight", "add_shopping_items",
-    "check_shopping_item", "clear_shopping_list",
+    "check_shopping_item", "clear_shopping_list", "set_shopping_price",
     "add_pantry_items", "consume_pantry_item", "clear_pantry",
 }
 
@@ -749,6 +775,14 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
     if name == "get_shopping_list":
         lst = await get_shopping_list(inputs.get("include_checked", False))
         return json.dumps(lst, ensure_ascii=False) if lst else "Lista spesa vuota."
+
+    if name == "set_shopping_price":
+        ok = await set_shopping_price(inputs["name"], inputs["price"])
+        return json.dumps({"ok": ok, "item": inputs["name"], "price": inputs["price"]}, ensure_ascii=False)
+
+    if name == "get_shopping_cost":
+        cost = await get_shopping_cost(inputs.get("include_checked", True))
+        return json.dumps(cost, ensure_ascii=False)
 
     if name == "check_shopping_item":
         ok = await check_shopping_item(inputs["name"])

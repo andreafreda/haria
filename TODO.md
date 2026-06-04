@@ -12,9 +12,7 @@ Stato: v0.1.31. Area food completa nel core. Elenco lavori residui a livello cod
 
 ## Food — feature backlog
 
-- [ ] **Budget / costi spesa (home_economics)**
-  - Prezzo per voce spesa, totale settimanale/mensile, sensor MQTT `spesa_costo`.
-  - Schema: aggiungere `price` a `shopping_items`; report nel weekly scheduler.
+- [x] **Budget / costi spesa (v0.1.36)** — colonna `price` su `shopping_items` (migrazione); `set_shopping_price`/`get_shopping_cost` in memory.py; tool `set_shopping_price`+`get_shopping_cost` e `price` in `add_shopping_items` (food_diary); sensor MQTT `spesa_costo` (+attr voci con/senza prezzo); totale+prezzi nella vista Spesa webpanel; riga costo nel report settimanale.
 
 - [x] **Foto codice a barre (v0.1.32)** — `telegram_handler._decode_barcode` (pyzbar+Pillow) decodifica EAN/UPC; se trovato passa hint a `chat` → `lookup_barcode` (OFF) per dati reali. Dockerfile: `apk add zbar jpeg-dev zlib-dev`.
 

@@ -21,7 +21,7 @@ import aiohttp
 import config as cfg
 from memory import (
     list_profiles, get_day_totals, get_hydration_day,
-    get_meal_plan, get_shopping_list, get_profile,
+    get_meal_plan, get_shopping_list, get_shopping_cost, get_profile,
     get_pantry, get_pantry_expiring, get_weight_stats,
 )
 
@@ -194,6 +194,8 @@ async def publish_discovery():
                  icon="mdi:calendar-month", json_attr_topic=f"{_BASE}/piano_mese/attr")
     _disc_sensor("haria_spesa", "Lista spesa", f"{_BASE}/spesa/state", "voci",
                  icon="mdi:cart", json_attr_topic=f"{_BASE}/spesa/attr")
+    _disc_sensor("haria_spesa_costo", "Spesa costo", f"{_BASE}/spesa_costo/state", "€",
+                 icon="mdi:currency-eur", json_attr_topic=f"{_BASE}/spesa_costo/attr")
     _disc_sensor("haria_dispensa", "Dispensa", f"{_BASE}/dispensa/state", "voci",
                  icon="mdi:fridge", json_attr_topic=f"{_BASE}/dispensa/attr")
     _disc_sensor("haria_dispensa_scadenze", "Dispensa in scadenza", f"{_BASE}/dispensa_scadenze/state",
@@ -297,8 +299,21 @@ async def refresh():
 
     # spesa
     items = await get_shopping_list(include_checked=False)
+    def _fmt_spesa(it):
+        s = f"{it['name']} {it.get('qty') or ''}".strip()
+        if it.get("price") is not None:
+            s += f" — €{it['price']:.2f}"
+        return s
     _pub(f"{_BASE}/spesa/state", len(items))
-    _pub(f"{_BASE}/spesa/attr", {"voci": [f"{it['name']} {it.get('qty') or ''}".strip() for it in items]})
+    _pub(f"{_BASE}/spesa/attr", {"voci": [_fmt_spesa(it) for it in items]})
+
+    # spesa costo (totale stimato, intera lista)
+    cost = await get_shopping_cost(include_checked=True)
+    _pub(f"{_BASE}/spesa_costo/state", cost["total"])
+    _pub(f"{_BASE}/spesa_costo/attr", {
+        "voci_con_prezzo": cost["priced"], "voci_senza_prezzo": cost["missing"],
+        "voci_totali": cost["count"],
+    })
 
     # dispensa
     pantry = await get_pantry()

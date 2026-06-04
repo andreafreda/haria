@@ -201,14 +201,23 @@ async def _h_shopping(request):
     if not items:
         body += "<div class='card muted'>Lista vuota. Chiedi a HARIA: «genera la spesa dal piano».</div>"
     else:
+        total = sum(it["price"] for it in items if it.get("price") is not None)
+        priced = sum(1 for it in items if it.get("price") is not None)
+        if priced:
+            body += (f"<div class='card'>Totale stimato: <span class='kcal'>€{total:.2f}</span> "
+                     f"<span class='muted'>({priced}/{len(items)} voci con prezzo)</span></div>")
         by_cat = {}
         for it in items:
             by_cat.setdefault(it["category"] or "Varie", []).append(it)
         for cat, lst in by_cat.items():
-            body += f"<div class='card'><b>{cat}</b><table>"
+            sub = sum(it["price"] for it in lst if it.get("price") is not None)
+            sub_lbl = f" <span class='muted'>€{sub:.2f}</span>" if sub else ""
+            body += f"<div class='card'><b>{cat}</b>{sub_lbl}<table>"
             for it in lst:
                 mark = "<span class='chk'>✔</span> " if it["checked"] else ""
-                body += f"<tr><td>{mark}{it['name']}</td><td class='muted'>{it['qty'] or ''}</td></tr>"
+                price = f"€{it['price']:.2f}" if it.get("price") is not None else ""
+                body += (f"<tr><td>{mark}{it['name']}</td><td class='muted'>{it['qty'] or ''}</td>"
+                         f"<td class='muted'>{price}</td></tr>")
             body += "</table></div>"
     return _page("Spesa", body)
 

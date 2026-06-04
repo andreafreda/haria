@@ -127,6 +127,7 @@ async def init_db():
         # migrazioni leggere: aggiungi colonne se mancano
         for table, col, ddl in [
             ("meal_plan", "kcal", "ALTER TABLE meal_plan ADD COLUMN kcal REAL"),
+            ("shopping_items", "price", "ALTER TABLE shopping_items ADD COLUMN price REAL"),
         ]:
             cur = await db.execute(f"PRAGMA table_info({table})")
             cols = [r[1] for r in await cur.fetchall()]
@@ -533,22 +534,47 @@ async def add_shopping_items(items: list[dict]) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         for it in items or []:
             await db.execute(
-                "INSERT INTO shopping_items (name, qty, category) VALUES (?, ?, ?)",
-                (it.get("name"), it.get("qty"), it.get("category")),
+                "INSERT INTO shopping_items (name, qty, category, price) VALUES (?, ?, ?, ?)",
+                (it.get("name"), it.get("qty"), it.get("category"), it.get("price")),
             )
         await db.commit()
     return len(items or [])
 
 
 async def get_shopping_list(include_checked: bool = False) -> list[dict]:
-    q = "SELECT id, name, qty, category, checked FROM shopping_items"
+    q = "SELECT id, name, qty, category, checked, price FROM shopping_items"
     if not include_checked:
         q += " WHERE checked = 0"
     q += " ORDER BY category, name"
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(q)
         rows = await cursor.fetchall()
-    return [{"id": r[0], "name": r[1], "qty": r[2], "category": r[3], "checked": bool(r[4])} for r in rows]
+    return [{"id": r[0], "name": r[1], "qty": r[2], "category": r[3],
+             "checked": bool(r[4]), "price": r[5]} for r in rows]
+
+
+async def set_shopping_price(name: str, price: float) -> bool:
+    """Imposta il prezzo (€) di una voce spesa per nome (match parziale)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE shopping_items SET price = ? WHERE LOWER(name) LIKE LOWER(?)",
+            (price, f"%{name}%"),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_shopping_cost(include_checked: bool = True) -> dict:
+    """Costo totale lista spesa: somma price. Ritorna {total, priced, missing, count}."""
+    q = "SELECT price FROM shopping_items"
+    if not include_checked:
+        q += " WHERE checked = 0"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(q)
+        rows = await cursor.fetchall()
+    total = round(sum(r[0] for r in rows if r[0] is not None), 2)
+    priced = sum(1 for r in rows if r[0] is not None)
+    return {"total": total, "priced": priced, "missing": len(rows) - priced, "count": len(rows)}
 
 
 async def check_shopping_item(name: str) -> bool:
