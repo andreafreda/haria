@@ -140,6 +140,24 @@ async def _food_weekly():
             logger.warning("Invio report settimanale a %s fallito: %s", chat_id, e)
 
 
+async def _mqtt_refresh():
+    try:
+        import mqtt_pub
+        await mqtt_pub.refresh()
+    except Exception as e:
+        logger.debug("Refresh MQTT fallito: %s", e)
+
+
+def schedule_mqtt_refresh():
+    """Aggiorna i sensori MQTT cibo ogni 5 minuti."""
+    if not _scheduler:
+        return
+    from apscheduler.triggers.interval import IntervalTrigger
+    _scheduler.add_job(_mqtt_refresh, IntervalTrigger(minutes=5),
+                       id="mqtt_refresh", replace_existing=True)
+    logger.info("Refresh MQTT cibo registrato (ogni 5 min).")
+
+
 def schedule_food_jobs(bot):
     """Registra job proattivi food_diary. Richiede scheduler già avviato."""
     global _bot

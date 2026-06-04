@@ -5,3 +5,4 @@ aiohttp>=3.9.0
 apscheduler>=3.10.0
 groq>=0.11.0
 ddgs>=6.0.0
+paho-mqtt>=2.0.0

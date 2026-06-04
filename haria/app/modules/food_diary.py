@@ -511,8 +511,26 @@ async def _recompute_profile_derived(member: str) -> dict | None:
     return await get_profile(member)
 
 
+_MQTT_REFRESH_TOOLS = {
+    "log_meal", "log_hydration", "plan_week", "set_plan_meal",
+    "set_diet_profile", "log_weight", "add_shopping_items",
+    "check_shopping_item", "clear_shopping_list",
+}
+
+
+def _maybe_refresh_mqtt(name: str):
+    if name not in _MQTT_REFRESH_TOOLS:
+        return
+    try:
+        import mqtt_pub
+        mqtt_pub.request_refresh()
+    except Exception:
+        pass
+
+
 async def handle(name: str, inputs: dict, user_id: str) -> str:
     member = _norm(inputs.get("member"))
+    _maybe_refresh_mqtt(name)
 
     if name == "set_diet_profile":
         if not member:

@@ -9,6 +9,7 @@ from telegram_handler import build_app
 import scheduler
 import notifier
 import webpanel
+import mqtt_pub
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 logging.basicConfig(
@@ -110,6 +111,8 @@ async def main():
         await scheduler.start(app.bot)
     if mods.get("food_diary", False):
         scheduler.schedule_food_jobs(app.bot)
+        await mqtt_pub.start()
+        scheduler.schedule_mqtt_refresh()
 
     web_runner = await webpanel.start()
 
@@ -128,6 +131,7 @@ async def main():
     await stop_event.wait()
 
     logger.info("Arresto HARIA...")
+    mqtt_pub.stop()
     scheduler.shutdown()
     try:
         await web_runner.cleanup()
