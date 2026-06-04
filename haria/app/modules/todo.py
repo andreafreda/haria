@@ -57,12 +57,20 @@ TOOLS = [
     },
     {
         "name": "add_todo_item",
-        "description": "Aggiungi un elemento a una lista todo/spesa HA (es. 'aggiungi latte alla spesa').",
+        "description": (
+            "Aggiungi un elemento a una lista todo/spesa HA (es. 'aggiungi latte alla spesa'). "
+            "Per le cose da fare puoi indicare un responsabile (owner) e una scadenza "
+            "(due_date 'YYYY-MM-DD' o due_datetime ISO). Per la spesa owner/scadenza non servono."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "item": {"type": "string", "description": "Cosa aggiungere"},
                 "list": {"type": "string", "description": "Nome o entity_id lista; default prima lista"},
+                "owner": {"type": "string", "description": "Chi deve farlo (es. Andrea). Solo per liste cose da fare."},
+                "due_date": {"type": "string", "description": "Scadenza giorno 'YYYY-MM-DD'"},
+                "due_datetime": {"type": "string", "description": "Scadenza data+ora ISO 'YYYY-MM-DDTHH:MM:SS'"},
+                "description": {"type": "string", "description": "Note aggiuntive sull'elemento"},
             },
             "required": ["item"],
         },
@@ -96,7 +104,10 @@ TOOLS = [
 PROMPT = (
     "\n- LISTE HA: per liste della spesa/todo native di Home Assistant usa i tool todo "
     "(add_todo_item, get_todo_items, complete_todo_item, remove_todo_item, list_todo_lists). "
-    "Queste liste sono visibili nell'app e nella dashboard HA. Se l'utente non specifica la lista, usa la prima disponibile."
+    "Queste liste sono visibili nell'app e nella dashboard HA. Se l'utente non specifica la lista, usa la prima disponibile. "
+    "Liste disponibili: 'spesa' (acquisti), 'cose da fare' e 'promemoria' (task). "
+    "Per i task in 'cose da fare'/'promemoria' puoi assegnare un responsabile (owner) e una scadenza (due_date/due_datetime); "
+    "per la 'spesa' di norma non servono."
 )
 
 
@@ -119,8 +130,24 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         return json.dumps({"list": list_id, "items": items}, ensure_ascii=False)
 
     if name == "add_todo_item":
-        await call_service("todo", "add_item", {"entity_id": list_id, "item": inputs["item"]})
-        return json.dumps({"ok": True, "added": inputs["item"], "list": list_id}, ensure_ascii=False)
+        data = {"entity_id": list_id, "item": inputs["item"]}
+        # owner: nessun campo nativo → lo mettiamo nella descrizione
+        desc_parts = []
+        owner = (inputs.get("owner") or "").strip()
+        if owner:
+            desc_parts.append(f"👤 {owner}")
+        if inputs.get("description"):
+            desc_parts.append(inputs["description"].strip())
+        if desc_parts:
+            data["description"] = " — ".join(desc_parts)
+        if inputs.get("due_datetime"):
+            data["due_datetime"] = inputs["due_datetime"]
+        elif inputs.get("due_date"):
+            data["due_date"] = inputs["due_date"]
+        await call_service("todo", "add_item", data)
+        return json.dumps({"ok": True, "added": inputs["item"], "list": list_id,
+                           "owner": owner or None, "due": data.get("due_datetime") or data.get("due_date")},
+                          ensure_ascii=False)
 
     if name == "complete_todo_item":
         await call_service("todo", "update_item",

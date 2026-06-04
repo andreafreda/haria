@@ -848,9 +848,10 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         if not todos:
             return "Nessuna lista todo in HA. Aggiungi l'integrazione 'Lista cose da fare'/'Shopping List'."
         want = (inputs.get("list") or "").strip().lower()
-        target = todos[0]
+        # default: lista "spesa" se esiste, altrimenti la prima
+        target = next((e for e in todos if "spesa" in e.lower()), todos[0])
         if want:
-            target = next((e for e in todos if want in e.lower()), todos[0])
+            target = next((e for e in todos if want in e.lower()), target)
         # dedup: leggi voci già presenti nella lista todo
         existing = set()
         try:
