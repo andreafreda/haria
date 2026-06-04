@@ -133,7 +133,8 @@ def _pub(topic: str, payload, retain: bool = True):
 
 def _disc_sensor(uid: str, name: str, state_topic: str, unit: str | None = None,
                  icon: str | None = None, value_template: str | None = None,
-                 json_attr_topic: str | None = None):
+                 json_attr_topic: str | None = None, state_class: str | None = None,
+                 device_class: str | None = None):
     cfg_topic = f"{_DISC}/sensor/{uid}/config"
     payload = {
         "name": name,
@@ -149,6 +150,10 @@ def _disc_sensor(uid: str, name: str, state_topic: str, unit: str | None = None,
         payload["value_template"] = value_template
     if json_attr_topic:
         payload["json_attributes_topic"] = json_attr_topic
+    if state_class:
+        payload["state_class"] = state_class
+    if device_class:
+        payload["device_class"] = device_class
     _pub(cfg_topic, payload)
 
 
@@ -172,6 +177,10 @@ async def publish_discovery():
         _disc_sensor(f"haria_{s}_grassi_oggi", f"{cap} grassi oggi", f"{base}/grassi_oggi", "g", "mdi:oil")
         _disc_sensor(f"haria_{s}_grassi_target", f"{cap} grassi target", f"{base}/grassi_target", "g", "mdi:oil")
         _disc_sensor(f"haria_{s}_acqua_oggi", f"{cap} acqua oggi", f"{base}/acqua_oggi", "mL", "mdi:cup-water")
+        _disc_sensor(f"haria_{s}_peso", f"{cap} peso", f"{base}/peso", "kg", "mdi:scale-bathroom",
+                     state_class="measurement", device_class="weight")
+        _disc_sensor(f"haria_{s}_bmi", f"{cap} BMI", f"{base}/bmi", icon="mdi:human",
+                     state_class="measurement")
     # globali
     _disc_sensor("haria_piano_oggi", "Piano oggi", f"{_BASE}/piano_oggi/state",
                  icon="mdi:silverware-fork-knife", json_attr_topic=f"{_BASE}/piano_oggi/attr")
@@ -207,6 +216,10 @@ async def refresh():
         _pub(f"{base}/proteine_target", macros["protein_target_g"] if macros else "")
         _pub(f"{base}/carbo_target", macros["carbs_target_g"] if macros else "")
         _pub(f"{base}/grassi_target", macros["fat_target_g"] if macros else "")
+        weight = p.get("weight_kg") if p else None
+        bmi = p.get("bmi") if p else None
+        _pub(f"{base}/peso", weight if weight is not None else "")
+        _pub(f"{base}/bmi", bmi if bmi is not None else "")
 
     # piano oggi (comune + override personali)
     plan = await get_meal_plan(today, today)
