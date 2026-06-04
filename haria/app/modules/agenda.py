@@ -13,9 +13,39 @@ from datetime import datetime, timedelta
 
 import scheduler
 from memory import add_reminder, get_user_reminders, deactivate_reminder
-from ha_client import get_states, call_service
+from ha_client import get_states, call_service, ws_command, get_calendar_events
 
 NAME = "agenda"
+
+
+def _norm_dt(v):
+    """Normalizza start/end evento (dict {dateTime|date} o stringa ISO) -> stringa."""
+    if isinstance(v, dict):
+        return v.get("dateTime") or v.get("date")
+    return v
+
+
+async def _list_events(cal: str, start: datetime, end: datetime) -> list[dict]:
+    """Eventi di UN calendario via REST /api/calendars (include uid, necessario
+    per delete/update; il servizio calendar.get_events NON ritorna l'uid)."""
+    return await get_calendar_events(
+        cal, start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds"))
+
+
+async def _find_events(cals: list[str], title: str | None,
+                       start: datetime, end: datetime) -> list[dict]:
+    """Trova eventi che matchano `title` (substring, case-insensitive) nei calendari."""
+    tl = (title or "").strip().lower()
+    out = []
+    for c in cals:
+        for e in await _list_events(c, start, end):
+            s = (e.get("summary") or "").lower()
+            if not tl or tl in s:
+                out.append({"calendar": c, "uid": e.get("uid"),
+                            "summary": e.get("summary"),
+                            "start": e.get("start"), "end": e.get("end"),
+                            "recurrence_id": e.get("recurrence_id")})
+    return out
 
 
 # ---------- helpers calendar ----------
@@ -207,7 +237,7 @@ TOOLS = [
     },
     {
         "name": "get_events",
-        "description": "Elenca gli eventi calendario nei prossimi N giorni (default 7). owners filtra i calendari.",
+        "description": "Elenca gli eventi calendario nei prossimi N giorni (default 7). owners filtra i calendari. Ogni evento include uid.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -215,6 +245,48 @@ TOOLS = [
                 "owners": {"type": "array", "items": {"type": "string"},
                            "description": "Filtra per membro; vuoto = tutti"},
             },
+        },
+    },
+    {
+        "name": "delete_event",
+        "description": (
+            "Cancella appuntamenti dal calendario HA. Indica title (cerca per nome, substring) e opzionale owners "
+            "per limitare i calendari. Cancella TUTTI gli eventi che matchano nella finestra (default ±60gg). "
+            "Usa per rimuovere appuntamenti o ripulire duplicati."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Nome (o parte) dell'evento da cancellare"},
+                "owners": {"type": "array", "items": {"type": "string"},
+                           "description": "Limita ai calendari di questi membri; vuoto = tutti"},
+                "days": {"type": "integer", "description": "Finestra di ricerca avanti in giorni (default 60)"},
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "name": "update_event",
+        "description": (
+            "Modifica appuntamenti esistenti sul calendario HA. Individua per title; applica i nuovi campi forniti "
+            "(new_title, start+end ISO oppure start_date+end_date, description, location) a tutti gli eventi che matchano."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Nome (o parte) dell'evento da modificare"},
+                "owners": {"type": "array", "items": {"type": "string"},
+                           "description": "Limita ai calendari di questi membri; vuoto = tutti"},
+                "new_title": {"type": "string", "description": "Nuovo titolo"},
+                "start": {"type": "string", "description": "Nuovo inizio ISO 'YYYY-MM-DDTHH:MM:SS'"},
+                "end": {"type": "string", "description": "Nuova fine ISO"},
+                "start_date": {"type": "string", "description": "Nuovo inizio tutto-il-giorno 'YYYY-MM-DD'"},
+                "end_date": {"type": "string", "description": "Nuova fine tutto-il-giorno 'YYYY-MM-DD'"},
+                "description": {"type": "string", "description": "Nuove note"},
+                "location": {"type": "string", "description": "Nuovo luogo"},
+                "days": {"type": "integer", "description": "Finestra di ricerca avanti in giorni (default 60)"},
+            },
+            "required": ["title"],
         },
     },
     # --- vista aggregata ---
@@ -238,6 +310,8 @@ PROMPT = (
     "\n  • set_reminder = AVVISO temporizzato ('tra mezzora dimmi X', 'ricordami alle 18'). Ti notifica e basta."
     "\n  • add_task = cosa da fare/spesa (lista todo HA, visibile in app HA). Puoi dare owners multipli e scadenza."
     "\n  • add_event = appuntamento sul calendario HA con orario; owners = su quali calendari (vuoto=famiglia)."
+    "\n  • delete_event = cancella appuntamenti per nome (anche per ripulire duplicati); update_event = modifica un appuntamento esistente."
+    "\n  Per cancellare/modificare un evento NON serve l'uid: passa il title, ci pensa il tool a trovarli."
     "\n  Calendari per membro: calendar.haria_andrea, calendar.haria_marina (vista condivisa in dashboard)."
     "\n  Liste todo: 'spesa', 'cose da fare', 'promemoria'. Se non specificato usa la prima."
     "\n  Per panoramiche ('cosa ho da fare', 'agenda della settimana') usa agenda_overview che unisce tutto."
@@ -352,18 +426,83 @@ async def _h_events(name: str, inputs: dict, user_id: str) -> str | None:
             return "Nessun calendario HA trovato."
         start = datetime.now()
         end = start + timedelta(days=days)
-        data = {"entity_id": cals, "start_date_time": start.isoformat(timespec="seconds"),
-                "end_date_time": end.isoformat(timespec="seconds")}
-        resp = await call_service("calendar", "get_events", data, return_response=True)
-        sr = resp.get("service_response", {}) if isinstance(resp, dict) else {}
         out = []
         for c in cals:
-            for e in sr.get(c, {}).get("events", []):
-                out.append({"calendar": c, "summary": e.get("summary"),
-                            "start": e.get("start"), "end": e.get("end"),
+            for e in await _list_events(c, start, end):
+                out.append({"calendar": c, "uid": e.get("uid"),
+                            "summary": e.get("summary"),
+                            "start": _norm_dt(e.get("start")), "end": _norm_dt(e.get("end")),
                             "location": e.get("location")})
         out.sort(key=lambda x: str(x.get("start") or ""))
         return json.dumps({"days": days, "events": out}, ensure_ascii=False)
+
+    if name == "delete_event":
+        cals = await _resolve_calendars(_owners_list(inputs))
+        if not cals:
+            return "Nessun calendario HA trovato."
+        days = int(inputs.get("days") or 60)
+        start = datetime.now() - timedelta(days=1)
+        end = datetime.now() + timedelta(days=days)
+        matches = await _find_events(cals, inputs.get("title"), start, end)
+        if not matches:
+            return json.dumps({"ok": False, "deleted": 0, "msg": "Nessun evento trovato"},
+                              ensure_ascii=False)
+        deleted = []
+        for m in matches:
+            payload = {"type": "calendar/event/delete",
+                       "entity_id": m["calendar"], "uid": m["uid"]}
+            if m.get("recurrence_id"):
+                payload["recurrence_id"] = m["recurrence_id"]
+                payload["recurrence_range"] = "THISANDFUTURE"
+            await ws_command(payload)
+            deleted.append({"calendar": m["calendar"], "summary": m.get("summary")})
+        return json.dumps({"ok": True, "deleted": len(deleted), "events": deleted},
+                          ensure_ascii=False)
+
+    if name == "update_event":
+        cals = await _resolve_calendars(_owners_list(inputs))
+        if not cals:
+            return "Nessun calendario HA trovato."
+        days = int(inputs.get("days") or 60)
+        start = datetime.now() - timedelta(days=1)
+        end = datetime.now() + timedelta(days=days)
+        matches = await _find_events(cals, inputs.get("title"), start, end)
+        if not matches:
+            return json.dumps({"ok": False, "updated": 0, "msg": "Nessun evento trovato"},
+                              ensure_ascii=False)
+        base_ev = {}
+        if inputs.get("new_title"):
+            base_ev["summary"] = inputs["new_title"]
+        if inputs.get("description") is not None:
+            base_ev["description"] = inputs["description"]
+        if inputs.get("location") is not None:
+            base_ev["location"] = inputs["location"]
+        if inputs.get("start") and inputs.get("end"):
+            base_ev["dtstart"] = inputs["start"]
+            base_ev["dtend"] = inputs["end"]
+        elif inputs.get("start_date") and inputs.get("end_date"):
+            base_ev["dtstart"] = inputs["start_date"]
+            base_ev["dtend"] = inputs["end_date"]
+        if not base_ev:
+            return "Niente da aggiornare: fornisci new_title, start+end, description o location."
+        updated = []
+        for m in matches:
+            ev = dict(base_ev)
+            # HA richiede evento completo: integra campi mancanti dall'esistente
+            if "summary" not in ev:
+                ev["summary"] = m.get("summary")
+            if "dtstart" not in ev:
+                ev["dtstart"] = _norm_dt(m.get("start"))
+                ev["dtend"] = _norm_dt(m.get("end"))
+            payload = {"type": "calendar/event/update", "entity_id": m["calendar"],
+                       "uid": m["uid"], "event": ev}
+            if m.get("recurrence_id"):
+                payload["recurrence_id"] = m["recurrence_id"]
+                payload["recurrence_range"] = "THISANDFUTURE"
+            await ws_command(payload)
+            updated.append({"calendar": m["calendar"]})
+        return json.dumps({"ok": True, "updated": len(updated), "event": base_ev},
+                          ensure_ascii=False)
     return None
 
 
