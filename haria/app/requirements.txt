@@ -6,3 +6,5 @@ apscheduler>=3.10.0
 groq>=0.11.0
 ddgs>=6.0.0
 paho-mqtt>=2.0.0
+pyzbar>=0.1.9
+Pillow>=10.0.0

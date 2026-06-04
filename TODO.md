@@ -1,6 +1,6 @@
 # HARIA — TODO (livello codice)
 
-Stato: v0.1.28. Area food completa nel core. Elenco lavori residui a livello codice.
+Stato: v0.1.31. Area food completa nel core. Elenco lavori residui a livello codice.
 
 ## Food — fatto (v0.1.28)
 
@@ -16,9 +16,7 @@ Stato: v0.1.28. Area food completa nel core. Elenco lavori residui a livello cod
   - Prezzo per voce spesa, totale settimanale/mensile, sensor MQTT `spesa_costo`.
   - Schema: aggiungere `price` a `shopping_items`; report nel weekly scheduler.
 
-- [ ] **Foto codice a barre**
-  - `telegram_handler` già gestisce foto (vision). Aggiungere: foto barcode → decode → `lookup_barcode` esistente.
-  - TODO: libreria decode barcode (pyzbar/zxing) in requirements; branch in handler per immagini barcode.
+- [x] **Foto codice a barre (v0.1.32)** — `telegram_handler._decode_barcode` (pyzbar+Pillow) decodifica EAN/UPC; se trovato passa hint a `chat` → `lookup_barcode` (OFF) per dati reali. Dockerfile: `apk add zbar jpeg-dev zlib-dev`.
 
 ## Moduli / piattaforma
 
@@ -35,4 +33,4 @@ Stato: v0.1.28. Area food completa nel core. Elenco lavori residui a livello cod
 
 - Entità food sono MQTT discovery via broker Mosquitto (`core-mosquitto`). Richiede broker attivo + integrazione MQTT.
 - `meal_plan` ora supporta override per-membro: `UNIQUE(date, meal_type, member)`, `member=''` = comune.
-- Dashboard HA: `haria-cibo` (Settimana / Mese / Spesa / Dispensa / Andrea / Marina).
+- Dashboard HA: `haria-cibo` (Settimana / Mese / Spesa / Dispensa / Andrea / Marina / Chat).

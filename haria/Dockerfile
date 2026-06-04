@@ -4,7 +4,7 @@ FROM $BUILD_FROM
 ENV LANG C.UTF-8
 ENV PYTHONUNBUFFERED=1
 
-RUN apk add --no-cache build-base libffi-dev openssl-dev sqlite
+RUN apk add --no-cache build-base libffi-dev openssl-dev sqlite zbar jpeg-dev zlib-dev
 
 WORKDIR /app
 

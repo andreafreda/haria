@@ -12,6 +12,26 @@ def _load_users() -> dict[str, dict]:
     return {str(u["chat_id"]): u for u in cfg.get("users", [])}
 
 
+def _decode_barcode(img_bytes: bytes) -> str | None:
+    """Decodifica un codice a barre (EAN/UPC) da un'immagine. None se assente."""
+    try:
+        import io
+        from PIL import Image
+        from pyzbar.pyzbar import decode
+        img = Image.open(io.BytesIO(img_bytes))
+        results = decode(img)
+        if not results:
+            return None
+        # privilegia barcode prodotto
+        for r in results:
+            if r.type in ("EAN13", "EAN8", "UPCA", "UPCE"):
+                return r.data.decode("ascii", "ignore")
+        return results[0].data.decode("ascii", "ignore")
+    except Exception as e:
+        logger.debug("Decode barcode fallito: %s", e)
+        return None
+
+
 async def _handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -125,7 +145,18 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.chat.send_action("typing")
     user_config = users[chat_id]
-    reply = await chat(chat_id, caption, user_config, image_b64=img_b64, image_media_type="image/jpeg")
+
+    # se c'è un codice a barre, risolvi il prodotto via lookup_barcode (dato esatto)
+    code = _decode_barcode(bytes(img_bytes))
+    if code:
+        hint = (caption + " " if caption else "") + (
+            f"[Codice a barre rilevato dalla foto: {code}. "
+            "Usa lookup_barcode per i valori nutrizionali reali del prodotto, "
+            "poi registra/aggiungi come richiesto (o chiedi quanto ne ha mangiato).]"
+        )
+        reply = await chat(chat_id, hint, user_config)
+    else:
+        reply = await chat(chat_id, caption, user_config, image_b64=img_b64, image_media_type="image/jpeg")
     await update.message.reply_text(reply)
 
 
