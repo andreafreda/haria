@@ -1,6 +1,6 @@
 name: "HARIA"
 description: "Home Assistant Reactive Intelligent Agent — AI assistant via Telegram and HA chat"
-version: "0.1.42"
+version: "0.1.43"
 slug: "haria"
 url: "https://github.com/andreafreda/haria"
 arch:
@@ -30,8 +30,7 @@ options:
     telegram: true
     ha_chat: false
     voice: true
-    reminders: true
-    todo: true
+    agenda: true
     food_diary: true
     web_search: true
     multi_user: true
@@ -49,8 +48,7 @@ schema:
     telegram: bool
     ha_chat: bool
     voice: bool
-    reminders: bool
-    todo: bool
+    agenda: bool
     food_diary: bool
     web_search: bool
     multi_user: bool
