@@ -456,10 +456,10 @@ async def get_meals(member: str, date_from: str | None = None, date_to: str | No
          "FROM meals WHERE member = ?")
     params: list = [member]
     if date_from:
-        q += " AND eaten_at >= ?"
+        q += " AND DATE(eaten_at) >= DATE(?)"
         params.append(date_from)
     if date_to:
-        q += " AND eaten_at <= ?"
+        q += " AND DATE(eaten_at) <= DATE(?)"
         params.append(date_to)
     q += " ORDER BY eaten_at DESC LIMIT 50"
     async with aiosqlite.connect(DB_PATH) as db:
