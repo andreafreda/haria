@@ -537,6 +537,7 @@ PROMPT = (
     " Un utente può registrare per un altro membro (es. la bimba): in tal caso usa il nome del membro indicato."
     " Per query storiche usa get_meals/get_weight_history."
     "\n- PIANO SETTIMANALE: per 'cosa si mangia oggi/questa settimana' usa get_meal_plan (calcola le date ISO dalla data attuale)."
+    " La SETTIMANA inizia di LUNEDÌ e finisce di DOMENICA (lun-dom). 'Questa settimana' = dal lunedì corrente alla domenica successiva."
     " Se non esiste un piano, proponi di crearlo con plan_week: genera tu un menù vario tenendo conto di profili/dieta/allergie/preferenze della famiglia, e STIMA le kcal di ogni pasto pianificato."
     " Se l'utente vuole cambiare un pasto, PROPONI 2-3 alternative coerenti; quando sceglie, salva con set_plan_meal."
     " Il piano è COMUNE di default (set_plan_meal/plan_week senza 'member'). Se una persona mangia qualcosa di diverso, salva un OVERRIDE PERSONALE valorizzando 'member' (solo per quel pasto). get_meal_plan ritorna il campo 'member' (vuoto = comune)."
