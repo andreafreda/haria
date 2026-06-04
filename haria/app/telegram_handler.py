@@ -7,6 +7,47 @@ import config as cfg
 
 logger = logging.getLogger(__name__)
 
+TELEGRAM_MAX = 4096
+
+
+def _split_text(text: str, limit: int = TELEGRAM_MAX) -> list[str]:
+    """Spezza un testo in chunk <= limit, preferendo i confini di riga."""
+    text = text or ""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    buf = ""
+    for line in text.split("\n"):
+        # riga singola troppo lunga: spezza a forza
+        while len(line) > limit:
+            if buf:
+                chunks.append(buf)
+                buf = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        add = (("\n" + line) if buf else line)
+        if len(buf) + len(add) > limit:
+            chunks.append(buf)
+            buf = line
+        else:
+            buf += add
+    if buf:
+        chunks.append(buf)
+    return chunks or [""]
+
+
+async def _reply(message, text: str, prefix: str = ""):
+    """Invia una risposta in plain text, spezzandola se supera il limite Telegram.
+
+    Plain text (niente parse_mode) evita crash 400 su markdown sbilanciato.
+    `prefix` viene anteposto solo al primo chunk.
+    """
+    full = (prefix + (text or "")) if prefix else (text or "")
+    if not full.strip():
+        full = "(nessuna risposta)"
+    for chunk in _split_text(full):
+        await message.reply_text(chunk)
+
 
 def _load_users() -> dict[str, dict]:
     return {str(u["chat_id"]): u for u in cfg.get("users", [])}
@@ -58,6 +99,16 @@ async def _handle_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Memoria conversazione cancellata.")
 
 
+async def _handle_reload_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    chat_id = str(update.effective_chat.id)
+    if chat_id not in _load_users():
+        return
+    cfg.reload()
+    await update.message.reply_text("Configurazione ricaricata da file.")
+
+
 async def _handle_update_entities(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -87,7 +138,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.chat.send_action("typing")
     reply = await chat(chat_id, text, user_config)
-    await update.message.reply_text(reply)
+    await _reply(update.message, reply)
 
 
 async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,7 +177,8 @@ async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action("typing")
     user_config = users[chat_id]
     reply = await chat(chat_id, text, user_config)
-    await update.message.reply_text(f"_{text}_\n\n{reply}", parse_mode="Markdown")
+    # plain text + prefisso trascrizione (niente Markdown: evita crash su caratteri speciali)
+    await _reply(update.message, reply, prefix=f"« {text} »\n\n")
 
 
 async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,7 +209,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply = await chat(chat_id, hint, user_config)
     else:
         reply = await chat(chat_id, caption, user_config, image_b64=img_b64, image_media_type="image/jpeg")
-    await update.message.reply_text(reply)
+    await _reply(update.message, reply)
 
 
 async def _handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,7 +233,7 @@ async def _handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action("typing")
     user_config = users[chat_id]
     reply = await chat(chat_id, caption, user_config, doc_b64=doc_b64)
-    await update.message.reply_text(reply)
+    await _reply(update.message, reply)
 
 
 async def _job_refresh_entities(context):
@@ -197,6 +249,7 @@ def build_app(token: str):
     app.add_handler(CommandHandler("start", _handle_start))
     app.add_handler(CommandHandler("reset", _handle_reset))
     app.add_handler(CommandHandler("updateentities", _handle_update_entities))
+    app.add_handler(CommandHandler("reloadconfig", _handle_reload_config))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
     app.add_handler(MessageHandler(filters.VOICE, _handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, _handle_photo))

@@ -99,7 +99,7 @@ async def _usda_search(query: str) -> dict | None:
         val = n.get("value")
         if val is None:
             continue
-        if "energy" in nm and "kcal" in (n.get("unitName", "").lower() or "kcal"):
+        if "energy" in nm and (n.get("unitName") or "").lower() == "kcal":
             nmap["kcal"] = val
         elif nm == "protein":
             nmap["protein_g"] = val

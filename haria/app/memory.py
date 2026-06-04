@@ -285,6 +285,40 @@ async def deactivate_reminder(reminder_id: int, user_id: str | None = None) -> b
         return cursor.rowcount > 0
 
 
+async def update_reminder(reminder_id: int, user_id: str | None = None,
+                          message: str | None = None, remind_at: str | None = None,
+                          recurring: str | None = None) -> dict | None:
+    """Modifica un promemoria attivo. Solo i campi passati vengono aggiornati.
+    Per cancellare recurring passa stringa vuota. Ritorna la riga aggiornata o None."""
+    sets: list[str] = []
+    params: list = []
+    if message is not None:
+        sets.append("message = ?"); params.append(message)
+    if remind_at is not None:
+        sets.append("remind_at = ?"); params.append(remind_at)
+    if recurring is not None:
+        sets.append("recurring = ?"); params.append(recurring or None)
+    if not sets:
+        return None
+    where = "id = ? AND active = 1"
+    params2 = list(params) + [int(reminder_id)]
+    if user_id is not None:
+        where += " AND user_id = ?"
+        params2.append(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            f"UPDATE reminders SET {', '.join(sets)} WHERE {where}", params2
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            return None
+        row = await (await db.execute(
+            "SELECT id, user_id, message, remind_at, recurring FROM reminders WHERE id = ?",
+            (int(reminder_id),),
+        )).fetchone()
+    return _reminder_row(row) if row else None
+
+
 # ---- food_diary: profili ----
 
 _PROFILE_FIELDS = (
@@ -307,6 +341,17 @@ async def get_profile(member: str) -> dict | None:
         )
         row = await cursor.fetchone()
     return _profile_row(row) if row else None
+
+
+async def delete_profile(member: str) -> bool:
+    """Cancella il profilo dieta di un membro. Ritorna True se cancellato."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM diet_profiles WHERE member = ?",
+            (member,),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 async def upsert_profile(member: str, fields: dict):
@@ -349,12 +394,40 @@ async def add_weight(member: str, weight_kg: float, bmi: float | None) -> dict:
 async def get_weight_history(member: str, limit: int = 20) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """SELECT weight_kg, bmi, logged_at FROM weight_log
+            """SELECT id, weight_kg, bmi, logged_at FROM weight_log
                WHERE member = ? ORDER BY logged_at DESC LIMIT ?""",
             (member, limit),
         )
         rows = await cursor.fetchall()
-    return [{"weight_kg": w, "bmi": b, "logged_at": t} for w, b, t in rows]
+    return [{"id": i, "weight_kg": w, "bmi": b, "logged_at": t} for i, w, b, t in rows]
+
+
+async def update_weight(weight_id: int, weight_kg: float | None = None,
+                        bmi: float | None = None) -> bool:
+    """Corregge una misura di peso per id. Ritorna True se modificata."""
+    sets: list[str] = []
+    params: list = []
+    if weight_kg is not None:
+        sets.append("weight_kg = ?"); params.append(weight_kg)
+    if bmi is not None:
+        sets.append("bmi = ?"); params.append(bmi)
+    if not sets:
+        return False
+    params.append(int(weight_id))
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            f"UPDATE weight_log SET {', '.join(sets)} WHERE id = ?", params
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def delete_weight(weight_id: int) -> bool:
+    """Cancella una misura di peso per id. Ritorna True se cancellata."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM weight_log WHERE id = ?", (int(weight_id),))
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 async def get_weight_stats(member: str, days: int = 30) -> dict | None:
@@ -568,6 +641,22 @@ async def add_hydration(member: str, ml: float) -> dict:
     return {"id": hid, "member": member, "ml": ml}
 
 
+async def delete_last_hydration(member: str) -> bool:
+    """Annulla l'ultimo log idratazione del membro oggi. Ritorna True se cancellato."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        row = await (await db.execute(
+            """SELECT id FROM hydration_log
+               WHERE member = ? AND DATE(logged_at) = DATE('now', 'localtime')
+               ORDER BY logged_at DESC LIMIT 1""",
+            (member,),
+        )).fetchone()
+        if not row:
+            return False
+        cursor = await db.execute("DELETE FROM hydration_log WHERE id = ?", (row[0],))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_hydration_day(member: str, day: str) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -606,6 +695,8 @@ async def get_shopping_list(include_checked: bool = False) -> list[dict]:
 
 async def set_shopping_price(name: str, price: float) -> bool:
     """Imposta il prezzo (€) di una voce spesa per nome (match parziale)."""
+    if not (name or "").strip():
+        return False
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "UPDATE shopping_items SET price = ? WHERE LOWER(name) LIKE LOWER(?)",
@@ -613,6 +704,19 @@ async def set_shopping_price(name: str, price: float) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def remove_shopping_item(name: str) -> int:
+    """Rimuove voci spesa per nome (match parziale). Ritorna righe eliminate."""
+    if not (name or "").strip():
+        return 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM shopping_items WHERE LOWER(name) LIKE LOWER(?)",
+            (f"%{name}%",),
+        )
+        await db.commit()
+        return cursor.rowcount
 
 
 async def get_shopping_cost(include_checked: bool = True) -> dict:
@@ -629,6 +733,8 @@ async def get_shopping_cost(include_checked: bool = True) -> dict:
 
 
 async def check_shopping_item(name: str) -> bool:
+    if not (name or "").strip():
+        return False
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "UPDATE shopping_items SET checked = 1 WHERE checked = 0 AND LOWER(name) LIKE LOWER(?)",
@@ -702,6 +808,34 @@ async def consume_pantry_item(name: str) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "DELETE FROM pantry_items WHERE LOWER(name) = ?", ((name or "").strip().lower(),)
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
+async def update_pantry_item(name: str, qty: str | None = None,
+                             category: str | None = None,
+                             expires_on: str | None = None) -> int:
+    """Modifica voci dispensa per nome (match parziale). Solo campi passati.
+    Ritorna righe modificate."""
+    sets: list[str] = []
+    params: list = []
+    if qty is not None:
+        sets.append("qty = ?"); params.append(qty)
+    if category is not None:
+        sets.append("category = ?"); params.append(category)
+    if expires_on is not None:
+        sets.append("expires_on = ?"); params.append(expires_on or None)
+    if not sets:
+        return 0
+    if not (name or "").strip():
+        return 0
+    sets.append("updated_at = CURRENT_TIMESTAMP")
+    params.append(f"%{name}%")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            f"UPDATE pantry_items SET {', '.join(sets)} WHERE LOWER(name) LIKE LOWER(?)",
+            params,
         )
         await db.commit()
         return cursor.rowcount

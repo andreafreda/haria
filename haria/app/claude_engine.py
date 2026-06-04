@@ -140,6 +140,7 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
             object_id = mp.split(".", 1)[1] if "." in mp else mp
             notify_service = f"alexa_media_{object_id}"
             message = inputs["message"]
+            last_error = None
             for announce_type in ("announce", "tts"):
                 try:
                     await call_service("notify", notify_service, {
@@ -254,14 +255,18 @@ async def chat(user_id: str, user_text: str, user_config: dict,
         messages = history + [{"role": "user", "content": user_text}]
     system = await _build_system(user_config)
 
+    MAX_TURNS = 8
     try:
-        while True:
+        for turn in range(MAX_TURNS):
+            # ultimo giro: forza una risposta testuale (evita loop infinito di tool)
+            force_respond = turn == MAX_TURNS - 1
             response = await client.messages.create(
                 model=MODEL,
                 max_tokens=1024,
                 system=system,
                 tools=get_tools(),
-                tool_choice={"type": "any"},
+                tool_choice=({"type": "tool", "name": "respond"} if force_respond
+                             else {"type": "any"}),
                 messages=messages,
             )
 
@@ -294,6 +299,12 @@ async def chat(user_id: str, user_text: str, user_config: dict,
             reply = "\n".join(text_blocks)
             await save_turn(user_id, "assistant", reply)
             return reply
+
+        # loop esaurito senza risposta (non dovrebbe capitare: ultimo giro forza respond)
+        logger.warning("chat: raggiunto MAX_TURNS senza respond per user %s", user_id)
+        fallback = "Ho avuto un problema a completare la richiesta. Riprova."
+        await save_turn(user_id, "assistant", fallback)
+        return fallback
 
     except RateLimitError:
         logger.warning("Rate limit Anthropic raggiunto per user %s", user_id)

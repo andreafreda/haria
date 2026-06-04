@@ -5,7 +5,6 @@ update_bill che riusa gli script HA esistenti (script.salva_consumi_*,
 script.salva_costo_*) per scrivere i CSV mensili.
 """
 import json
-import asyncio
 from ha_client import call_service, get_states
 
 NAME = "bollette"

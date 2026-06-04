@@ -7,6 +7,7 @@ Dashboard sola-lettura:
   - Lista della spesa
 """
 import logging
+import html
 from datetime import date, timedelta
 from aiohttp import web
 import csv
@@ -22,6 +23,13 @@ import config as cfg
 from claude_engine import chat
 
 logger = logging.getLogger(__name__)
+
+
+def _e(v) -> str:
+    """Escape HTML di un valore (anti-XSS su dati utente/AI). None/'' -> ''."""
+    if v is None:
+        return ""
+    return html.escape(str(v))
 
 
 def _chat_user() -> dict | None:
@@ -58,13 +66,13 @@ th{background:#eef2fb}
 
 
 def _page(title: str, body: str) -> web.Response:
-    html = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
+    page = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA — Diario Alimentare</header>
 <nav><a href="./">Piano</a><a href="./month">Mese</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./chat">Chat</a><a href="./export.csv">Export CSV</a></nav>
 <main>{body}</main></body></html>"""
-    return web.Response(text=html, content_type="text/html")
+    return web.Response(text=page, content_type="text/html")
 
 
 def _day_card(label: str, meals: list[dict]) -> str:
@@ -79,9 +87,9 @@ def _day_card(label: str, meals: list[dict]) -> str:
     out += "<table><tr><th>Pasto</th><th>Chi</th><th>Portate</th><th>Ricetta</th><th>Porz.</th><th>kcal</th></tr>"
     for m in meals:
         who = (m.get("member") or "").strip()
-        who_lbl = who.capitalize() if who else "<span class='muted'>comune</span>"
-        out += (f"<tr><td>{m['meal_type']}</td><td>{who_lbl}</td><td>{m['items'] or ''}</td>"
-                f"<td class='muted'>{m['recipe'] or ''}</td><td>{m['servings'] or ''}</td>"
+        who_lbl = _e(who.capitalize()) if who else "<span class='muted'>comune</span>"
+        out += (f"<tr><td>{_e(m['meal_type'])}</td><td>{who_lbl}</td><td>{_e(m['items'] or '')}</td>"
+                f"<td class='muted'>{_e(m['recipe'] or '')}</td><td>{_e(m['servings'] or '')}</td>"
                 f"<td>{round(m['kcal']) if m['kcal'] else ''}</td></tr>")
     out += "</table></div>"
     return out
@@ -153,7 +161,7 @@ async def _h_diary(request):
         p = await get_profile(member)
         kcal_t = p.get("kcal_target") if p else None
         macros = compute_macro_targets(kcal_t, p.get("weight_kg")) if p else None
-        body += (f"<div class='card'><b>{member.capitalize()}</b> "
+        body += (f"<div class='card'><b>{_e(member.capitalize())}</b> "
                  f"<span class='kcal'>{totals['kcal']} kcal</span> "
                  f"<span class='muted'>P {totals['protein_g']}g · C {totals['carbs_g']}g · G {totals['fat_g']}g · 💧 {hydr['ml_total']} ml</span>")
         if kcal_t or macros:
@@ -171,7 +179,7 @@ async def _h_diary(request):
         if meals:
             body += "<table><tr><th>Pasto</th><th>Descrizione</th><th>kcal</th></tr>"
             for m in sorted(meals, key=lambda x: _MEAL_ORDER.get(x['meal_type'], 9)):
-                body += f"<tr><td>{m['meal_type']}</td><td>{m['description']}</td><td>{m['kcal_total'] or ''}</td></tr>"
+                body += f"<tr><td>{_e(m['meal_type'])}</td><td>{_e(m['description'])}</td><td>{m['kcal_total'] or ''}</td></tr>"
             body += "</table>"
         body += "</div>"
     logged = await get_logged_days(30)
@@ -199,17 +207,17 @@ async def _h_profiles(request):
             pt = f"{macros['protein_target_g']}g" if macros else ""
             ct = f"{macros['carbs_target_g']}g" if macros else ""
             gt = f"{macros['fat_target_g']}g" if macros else ""
-            body += (f"<tr><td>{p['member']}</td><td>{p['sex'] or ''}</td><td>{p['age'] or ''}</td>"
-                     f"<td>{p['height_cm'] or ''}</td><td>{p['weight_kg'] or ''}</td><td>{p['bmi'] or ''}</td>"
-                     f"<td>{p['goal'] or ''}</td><td>{p['activity_level'] or ''}</td><td>{p['kcal_target'] or ''}</td>"
+            body += (f"<tr><td>{_e(p['member'])}</td><td>{_e(p['sex'] or '')}</td><td>{_e(p['age'] or '')}</td>"
+                     f"<td>{_e(p['height_cm'] or '')}</td><td>{_e(p['weight_kg'] or '')}</td><td>{_e(p['bmi'] or '')}</td>"
+                     f"<td>{_e(p['goal'] or '')}</td><td>{_e(p['activity_level'] or '')}</td><td>{_e(p['kcal_target'] or '')}</td>"
                      f"<td>{pt}</td><td>{ct}</td><td>{gt}</td></tr>")
         body += "</table>"
         for p in profs:
             hist = await get_weight_history(p["member"], limit=10)
             if hist:
-                body += f"<div class='card'><b>Peso {p['member']}</b><table><tr><th>Data</th><th>kg</th><th>BMI</th></tr>"
+                body += f"<div class='card'><b>Peso {_e(p['member'])}</b><table><tr><th>Data</th><th>kg</th><th>BMI</th></tr>"
                 for h in hist:
-                    body += f"<tr><td>{h['logged_at']}</td><td>{h['weight_kg']}</td><td>{h['bmi'] or ''}</td></tr>"
+                    body += f"<tr><td>{_e(h['logged_at'])}</td><td>{_e(h['weight_kg'])}</td><td>{_e(h['bmi'] or '')}</td></tr>"
                 body += "</table></div>"
     return _page("Profili", body)
 
@@ -231,11 +239,11 @@ async def _h_shopping(request):
         for cat, lst in by_cat.items():
             sub = sum(it["price"] for it in lst if it.get("price") is not None)
             sub_lbl = f" <span class='muted'>€{sub:.2f}</span>" if sub else ""
-            body += f"<div class='card'><b>{cat}</b>{sub_lbl}<table>"
+            body += f"<div class='card'><b>{_e(cat)}</b>{sub_lbl}<table>"
             for it in lst:
                 mark = "<span class='chk'>✔</span> " if it["checked"] else ""
                 price = f"€{it['price']:.2f}" if it.get("price") is not None else ""
-                body += (f"<tr><td>{mark}{it['name']}</td><td class='muted'>{it['qty'] or ''}</td>"
+                body += (f"<tr><td>{mark}{_e(it['name'])}</td><td class='muted'>{_e(it['qty'] or '')}</td>"
                          f"<td class='muted'>{price}</td></tr>")
             body += "</table></div>"
     return _page("Spesa", body)
@@ -249,7 +257,7 @@ async def _h_pantry(request):
     if exp:
         body += "<div class='card'><b>⚠️ In scadenza (≤ 3 giorni)</b><table>"
         for it in exp:
-            body += f"<tr><td>{it['name']}</td><td class='muted'>{it['qty'] or ''}</td><td class='muted'>scad. {it['expires_on']}</td></tr>"
+            body += f"<tr><td>{_e(it['name'])}</td><td class='muted'>{_e(it['qty'] or '')}</td><td class='muted'>scad. {_e(it['expires_on'])}</td></tr>"
         body += "</table></div>"
     if not items:
         body += "<div class='card muted'>Dispensa vuota. Chiedi a HARIA: «aggiungi alla dispensa…».</div>"
@@ -258,11 +266,11 @@ async def _h_pantry(request):
         for it in items:
             by_cat.setdefault(it["category"] or "Varie", []).append(it)
         for cat, lst in by_cat.items():
-            body += f"<div class='card'><b>{cat}</b><table>"
+            body += f"<div class='card'><b>{_e(cat)}</b><table>"
             for it in lst:
                 warn = "⚠️ " if (it["name"], it["expires_on"]) in exp_names else ""
-                scad = f"scad. {it['expires_on']}" if it["expires_on"] else ""
-                body += f"<tr><td>{warn}{it['name']}</td><td class='muted'>{it['qty'] or ''}</td><td class='muted'>{scad}</td></tr>"
+                scad = f"scad. {_e(it['expires_on'])}" if it["expires_on"] else ""
+                body += f"<tr><td>{warn}{_e(it['name'])}</td><td class='muted'>{_e(it['qty'] or '')}</td><td class='muted'>{scad}</td></tr>"
             body += "</table></div>"
     return _page("Dispensa", body)
 

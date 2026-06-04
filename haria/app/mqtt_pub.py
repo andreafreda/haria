@@ -354,7 +354,8 @@ def request_refresh():
     if not _enabled:
         return
     try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(refresh())
-    except Exception:
-        pass
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("request_refresh: nessun event loop attivo, skip")
+        return
+    loop.create_task(refresh())

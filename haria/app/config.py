@@ -22,5 +22,12 @@ def load() -> dict:
     return _cfg
 
 
+def reload() -> dict:
+    """Forza la rilettura del file di config (svuota la cache in RAM)."""
+    global _cfg
+    _cfg = {}
+    return load()
+
+
 def get(key: str, default=None):
     return load().get(key, default)

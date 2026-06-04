@@ -10,12 +10,14 @@ import os
 import glob
 from datetime import datetime
 from memory import (
-    get_profile, upsert_profile, add_weight, get_weight_history,
+    get_profile, upsert_profile, delete_profile, add_weight, get_weight_history,
+    update_weight, delete_weight,
     add_meal, get_meals, delete_meal, update_meal, set_plan_meal, delete_plan_meal, get_meal_plan,
-    get_day_totals, add_hydration, get_hydration_day,
+    get_day_totals, add_hydration, get_hydration_day, delete_last_hydration,
     add_shopping_items, get_shopping_list, check_shopping_item, clear_shopping_list,
-    set_shopping_price, get_shopping_cost,
+    set_shopping_price, get_shopping_cost, remove_shopping_item,
     add_pantry_items, get_pantry, get_pantry_expiring, consume_pantry_item, clear_pantry,
+    update_pantry_item,
 )
 import nutrition
 from ha_client import get_states, call_service
@@ -199,6 +201,18 @@ TOOLS = [
         },
     },
     {
+        "name": "delete_profile",
+        "description": (
+            "Cancella il profilo nutrizionale di un membro (irreversibile). "
+            "Usa solo su richiesta esplicita dell'utente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"member": {"type": "string"}},
+            "required": ["member"],
+        },
+    },
+    {
         "name": "log_weight",
         "description": "Registra il peso attuale di un membro. Aggiorna BMI e profilo.",
         "input_schema": {
@@ -212,11 +226,38 @@ TOOLS = [
     },
     {
         "name": "get_weight_history",
-        "description": "Storico peso/BMI di un membro (trend).",
+        "description": "Storico peso/BMI di un membro (trend). Ogni voce include id (per correggere/cancellare).",
         "input_schema": {
             "type": "object",
             "properties": {"member": {"type": "string"}},
             "required": ["member"],
+        },
+    },
+    {
+        "name": "update_weight",
+        "description": (
+            "Corregge una misura di peso esistente dato il suo id. Prima chiama get_weight_history "
+            "per trovare l'id. Passa weight_kg e/o bmi."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "id misura da get_weight_history"},
+                "weight_kg": {"type": "number"},
+                "bmi": {"type": "number"},
+            },
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "delete_weight",
+        "description": (
+            "Cancella una misura di peso errata dato il suo id (da get_weight_history). Irreversibile."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer", "description": "id misura da get_weight_history"}},
+            "required": ["id"],
         },
     },
     {
@@ -426,6 +467,15 @@ TOOLS = [
         },
     },
     {
+        "name": "delete_hydration",
+        "description": "Annulla l'ultimo log idratazione di oggi di un membro (correzione errore).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"member": {"type": "string"}},
+            "required": ["member"],
+        },
+    },
+    {
         "name": "lookup_nutrition",
         "description": (
             "Cerca valori nutrizionali REALI per 100 g di un alimento da fonti gratuite (OpenFoodFacts/USDA), con cache. "
@@ -513,6 +563,18 @@ TOOLS = [
         },
     },
     {
+        "name": "remove_shopping_item",
+        "description": (
+            "Rimuove UNA voce specifica dalla lista spesa per nome (match parziale). "
+            "Usa per togliere un singolo articolo, non l'intera lista (per quella usa clear_shopping_list)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    {
         "name": "clear_shopping_list",
         "description": "Svuota la lista spesa. only_checked=true rimuove solo gli articoli già presi.",
         "input_schema": {
@@ -581,6 +643,23 @@ TOOLS = [
         },
     },
     {
+        "name": "update_pantry_item",
+        "description": (
+            "Modifica una voce della dispensa per nome (match parziale): quantità, categoria o scadenza. "
+            "Solo i campi forniti vengono cambiati."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "qty": {"type": "string", "description": "Nuova quantità"},
+                "category": {"type": "string", "description": "Nuova categoria"},
+                "expires_on": {"type": "string", "description": "Nuova scadenza ISO YYYY-MM-DD"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
         "name": "clear_pantry",
         "description": "Svuota completamente la dispensa.",
         "input_schema": {"type": "object", "properties": {}},
@@ -605,6 +684,18 @@ TOOLS = [
         "name": "list_diets",
         "description": "Elenca le diete di riferimento attualmente caricate (nomi file).",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "delete_diet",
+        "description": (
+            "Cancella una dieta di riferimento salvata, dato il nome file (da list_diets) o nome descrittivo. "
+            "Solo file nella cartella scrivibile (/config/haria_diets). Irreversibile."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "Nome file (es. 'dieta_agosto.md') o nome descrittivo"}},
+            "required": ["name"],
+        },
     },
 ]
 
@@ -654,10 +745,12 @@ async def _recompute_profile_derived(member: str) -> dict | None:
 
 
 _MQTT_REFRESH_TOOLS = {
-    "log_meal", "delete_meal", "update_meal", "log_hydration", "plan_week", "set_plan_meal", "delete_plan_meal",
-    "set_diet_profile", "log_weight", "add_shopping_items",
-    "check_shopping_item", "clear_shopping_list", "set_shopping_price",
-    "add_pantry_items", "consume_pantry_item", "clear_pantry",
+    "log_meal", "delete_meal", "update_meal", "log_hydration", "delete_hydration",
+    "plan_week", "set_plan_meal", "delete_plan_meal",
+    "set_diet_profile", "delete_profile", "log_weight", "update_weight", "delete_weight",
+    "add_shopping_items", "check_shopping_item", "clear_shopping_list",
+    "set_shopping_price", "remove_shopping_item",
+    "add_pantry_items", "consume_pantry_item", "update_pantry_item", "clear_pantry",
 }
 
 
@@ -697,6 +790,12 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
             p["macro_targets"] = macros
         return json.dumps(p, ensure_ascii=False)
 
+    if name == "delete_profile":
+        if not member:
+            return "Errore: specifica il membro."
+        ok = await delete_profile(member)
+        return json.dumps({"ok": ok, "member": member}, ensure_ascii=False)
+
     if name == "log_weight":
         weight = inputs["weight_kg"]
         p = await get_profile(member)
@@ -714,6 +813,14 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
     if name == "get_weight_history":
         hist = await get_weight_history(member)
         return json.dumps(hist, ensure_ascii=False) if hist else f"Nessun peso registrato per '{member}'."
+
+    if name == "update_weight":
+        ok = await update_weight(int(inputs["id"]), inputs.get("weight_kg"), inputs.get("bmi"))
+        return json.dumps({"ok": ok, "id": inputs["id"]}, ensure_ascii=False)
+
+    if name == "delete_weight":
+        ok = await delete_weight(int(inputs["id"]))
+        return json.dumps({"ok": ok, "id": inputs["id"]}, ensure_ascii=False)
 
     if name == "log_meal":
         totals = {
@@ -806,6 +913,12 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         hydr = await get_hydration_day(member, day)
         return json.dumps({"member": member, "date": day, "ml_total": hydr["ml_total"]}, ensure_ascii=False)
 
+    if name == "delete_hydration":
+        ok = await delete_last_hydration(member)
+        day = _today()
+        hydr = await get_hydration_day(member, day)
+        return json.dumps({"ok": ok, "member": member, "today_ml": hydr["ml_total"]}, ensure_ascii=False)
+
     if name == "lookup_nutrition":
         res = await nutrition.lookup_food(inputs["query"])
         return json.dumps(res, ensure_ascii=False) if res else "null"
@@ -833,6 +946,10 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
     if name == "check_shopping_item":
         ok = await check_shopping_item(inputs["name"])
         return json.dumps({"ok": ok, "item": inputs["name"]}, ensure_ascii=False)
+
+    if name == "remove_shopping_item":
+        n = await remove_shopping_item(inputs["name"])
+        return json.dumps({"ok": n > 0, "removed": n, "item": inputs["name"]}, ensure_ascii=False)
 
     if name == "clear_shopping_list":
         n = await clear_shopping_list(inputs.get("only_checked", False))
@@ -894,6 +1011,11 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         n = await consume_pantry_item(inputs["name"])
         return json.dumps({"ok": True, "removed": n}, ensure_ascii=False)
 
+    if name == "update_pantry_item":
+        n = await update_pantry_item(inputs["name"], inputs.get("qty"),
+                                     inputs.get("category"), inputs.get("expires_on"))
+        return json.dumps({"ok": n > 0, "updated": n, "item": inputs["name"]}, ensure_ascii=False)
+
     if name == "clear_pantry":
         n = await clear_pantry()
         return json.dumps({"ok": True, "removed": n}, ensure_ascii=False)
@@ -914,5 +1036,19 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
                 names += [os.path.basename(f) for ext in _DIET_EXTS
                           for f in glob.glob(os.path.join(d, ext))]
         return json.dumps(sorted(set(names)), ensure_ascii=False) if names else "Nessuna dieta caricata."
+
+    if name == "delete_diet":
+        raw = (inputs.get("name") or "").strip()
+        if not raw:
+            return "Errore: specifica il nome della dieta."
+        # candidati: nome file esatto, oppure slug del nome descrittivo
+        bases = {raw, f"{_slugify(raw)}.md", f"{_slugify(os.path.splitext(raw)[0])}.md"}
+        for b in bases:
+            path = os.path.join(_DIET_WRITE_DIR, os.path.basename(b))
+            if os.path.isfile(path):
+                os.remove(path)
+                return json.dumps({"ok": True, "deleted": os.path.basename(path)}, ensure_ascii=False)
+        return json.dumps({"ok": False, "msg": f"Dieta '{raw}' non trovata in {_DIET_WRITE_DIR}"},
+                          ensure_ascii=False)
 
     return f"Tool sconosciuto nel modulo {NAME}: {name}"

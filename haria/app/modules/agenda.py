@@ -12,7 +12,8 @@ import json
 from datetime import datetime, timedelta
 
 import scheduler
-from memory import add_reminder, get_user_reminders, deactivate_reminder
+from memory import (add_reminder, get_user_reminders, deactivate_reminder,
+                    update_reminder as _update_reminder)
 from ha_client import get_states, call_service, ws_command, get_calendar_events
 
 NAME = "agenda"
@@ -148,6 +149,24 @@ TOOLS = [
             "required": ["id"],
         },
     },
+    {
+        "name": "update_reminder",
+        "description": (
+            "Modifica un promemoria esistente (da list_reminders). Passa id e i campi da cambiare: "
+            "message (testo), remind_at (ISO datetime one-shot) o recurring (cron 5 campi). "
+            "Cambiare orario/cron riprogramma l'avviso."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "ID promemoria"},
+                "message": {"type": "string", "description": "Nuovo testo"},
+                "remind_at": {"type": "string", "description": "Nuovo ISO datetime one-shot"},
+                "recurring": {"type": "string", "description": "Nuovo cron 5 campi (vuoto = rimuovi ricorrenza)"},
+            },
+            "required": ["id"],
+        },
+    },
     # --- task (todo HA) ---
     {
         "name": "list_todo_lists",
@@ -207,6 +226,28 @@ TOOLS = [
             "properties": {
                 "item": {"type": "string", "description": "Nome esatto dell'attività"},
                 "list": {"type": "string", "description": "Nome/entity_id lista"},
+            },
+            "required": ["item"],
+        },
+    },
+    {
+        "name": "update_task",
+        "description": (
+            "Modifica un'attività esistente in una lista todo HA. Individua per item (nome attuale). "
+            "Campi opzionali: new_item (rinomina), due_date 'YYYY-MM-DD' o due_datetime ISO, "
+            "description (note), status ('needs_action' o 'completed')."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item": {"type": "string", "description": "Nome attuale dell'attività"},
+                "list": {"type": "string", "description": "Nome/entity_id lista"},
+                "new_item": {"type": "string", "description": "Nuovo nome"},
+                "due_date": {"type": "string", "description": "Scadenza 'YYYY-MM-DD'"},
+                "due_datetime": {"type": "string", "description": "Scadenza ISO"},
+                "description": {"type": "string", "description": "Note"},
+                "status": {"type": "string", "enum": ["needs_action", "completed"],
+                           "description": "Stato"},
             },
             "required": ["item"],
         },
@@ -312,6 +353,7 @@ PROMPT = (
     "\n  • add_event = appuntamento sul calendario HA con orario; owners = su quali calendari (vuoto=famiglia)."
     "\n  • delete_event = cancella appuntamenti per nome (anche per ripulire duplicati); update_event = modifica un appuntamento esistente."
     "\n  Per cancellare/modificare un evento NON serve l'uid: passa il title, ci pensa il tool a trovarli."
+    "\n  • update_reminder = modifica un promemoria (testo/orario/cron) per id; update_task = modifica un'attività (rinomina/scadenza/note/stato)."
     "\n  Calendari per membro: calendar.haria_andrea, calendar.haria_marina (vista condivisa in dashboard)."
     "\n  Liste todo: 'spesa', 'cose da fare', 'promemoria'. Se non specificato usa la prima."
     "\n  Per panoramiche ('cosa ho da fare', 'agenda della settimana') usa agenda_overview che unisce tutto."
@@ -340,6 +382,23 @@ async def _h_reminders(name: str, inputs: dict, user_id: str) -> str | None:
             scheduler.cancel_job(int(inputs["id"]))
             return f"Promemoria #{inputs['id']} cancellato."
         return f"Promemoria #{inputs['id']} non trovato."
+    if name == "update_reminder":
+        rid = int(inputs["id"])
+        r = await _update_reminder(
+            rid, user_id,
+            message=inputs.get("message"),
+            remind_at=inputs.get("remind_at"),
+            recurring=inputs.get("recurring"),
+        )
+        if not r:
+            return f"Promemoria #{rid} non trovato o niente da aggiornare."
+        # riprogramma se cambiato orario/cron
+        if inputs.get("remind_at") is not None or inputs.get("recurring") is not None:
+            scheduler.cancel_job(rid)
+            if not scheduler.schedule_reminder(r):
+                await deactivate_reminder(rid, user_id)
+                return "Errore: nuovo orario non valido o nel passato."
+        return f"Promemoria #{rid} aggiornato."
     return None
 
 
@@ -348,7 +407,7 @@ async def _h_tasks(name: str, inputs: dict, user_id: str) -> str | None:
         ents = await _todo_entities()
         return json.dumps(ents, ensure_ascii=False) if ents else "Nessuna lista todo in HA."
 
-    if name in ("add_task", "get_tasks", "complete_task", "remove_task"):
+    if name in ("add_task", "get_tasks", "complete_task", "remove_task", "update_task"):
         list_id = await _resolve_list(inputs.get("list"))
         if not list_id:
             return f"Lista '{inputs.get('list')}' non trovata. Usa list_todo_lists."
@@ -390,6 +449,24 @@ async def _h_tasks(name: str, inputs: dict, user_id: str) -> str | None:
         if name == "remove_task":
             await call_service("todo", "remove_item", {"entity_id": list_id, "item": inputs["item"]})
             return json.dumps({"ok": True, "removed": inputs["item"], "list": list_id}, ensure_ascii=False)
+
+        if name == "update_task":
+            data = {"entity_id": list_id, "item": inputs["item"]}
+            if inputs.get("new_item"):
+                data["rename"] = inputs["new_item"]
+            if inputs.get("status"):
+                data["status"] = inputs["status"]
+            if inputs.get("description") is not None:
+                data["description"] = inputs["description"]
+            if inputs.get("due_datetime"):
+                data["due_datetime"] = inputs["due_datetime"]
+            elif inputs.get("due_date"):
+                data["due_date"] = inputs["due_date"]
+            if len(data) <= 2:
+                return "Niente da aggiornare: fornisci new_item, status, description o scadenza."
+            await call_service("todo", "update_item", data)
+            return json.dumps({"ok": True, "updated": inputs["item"], "list": list_id},
+                              ensure_ascii=False)
     return None
 
 
