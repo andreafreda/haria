@@ -22,7 +22,7 @@ import config as cfg
 from memory import (
     list_profiles, get_day_totals, get_hydration_day,
     get_meal_plan, get_shopping_list, get_profile,
-    get_pantry, get_pantry_expiring,
+    get_pantry, get_pantry_expiring, get_weight_stats,
 )
 
 logger = logging.getLogger(__name__)
@@ -180,6 +180,9 @@ async def publish_discovery():
         _disc_sensor(f"haria_{s}_acqua_oggi", f"{cap} acqua oggi", f"{base}/acqua_oggi", "mL", "mdi:cup-water")
         _disc_sensor(f"haria_{s}_peso", f"{cap} peso", f"{base}/peso", "kg", "mdi:scale-bathroom",
                      state_class="measurement", device_class="weight")
+        _disc_sensor(f"haria_{s}_peso_delta_30d", f"{cap} peso Δ 30g", f"{base}/peso_delta_30d", "kg", "mdi:scale-balance")
+        _disc_sensor(f"haria_{s}_peso_min_30d", f"{cap} peso min 30g", f"{base}/peso_min_30d", "kg", "mdi:arrow-down-bold")
+        _disc_sensor(f"haria_{s}_peso_max_30d", f"{cap} peso max 30g", f"{base}/peso_max_30d", "kg", "mdi:arrow-up-bold")
         _disc_sensor(f"haria_{s}_bmi", f"{cap} BMI", f"{base}/bmi", icon="mdi:human",
                      state_class="measurement")
     # globali
@@ -221,8 +224,20 @@ async def refresh():
         _pub(f"{base}/proteine_target", macros["protein_target_g"] if macros else "")
         _pub(f"{base}/carbo_target", macros["carbs_target_g"] if macros else "")
         _pub(f"{base}/grassi_target", macros["fat_target_g"] if macros else "")
-        weight = p.get("weight_kg") if p else None
-        bmi = p.get("bmi") if p else None
+        # peso/bmi da ultimo log reale (fallback su snapshot profilo)
+        ws = await get_weight_stats(m, 30)
+        if ws:
+            weight = ws["latest"]
+            bmi = ws["latest_bmi"] if ws["latest_bmi"] is not None else (p.get("bmi") if p else None)
+            _pub(f"{base}/peso_delta_30d", ws["delta"])
+            _pub(f"{base}/peso_min_30d", ws["min"])
+            _pub(f"{base}/peso_max_30d", ws["max"])
+        else:
+            weight = p.get("weight_kg") if p else None
+            bmi = p.get("bmi") if p else None
+            _pub(f"{base}/peso_delta_30d", "")
+            _pub(f"{base}/peso_min_30d", "")
+            _pub(f"{base}/peso_max_30d", "")
         _pub(f"{base}/peso", weight if weight is not None else "")
         _pub(f"{base}/bmi", bmi if bmi is not None else "")
 

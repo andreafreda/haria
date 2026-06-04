@@ -356,6 +356,41 @@ async def get_weight_history(member: str, limit: int = 20) -> list[dict]:
     return [{"weight_kg": w, "bmi": b, "logged_at": t} for w, b, t in rows]
 
 
+async def get_weight_stats(member: str, days: int = 30) -> dict | None:
+    """Statistiche peso su finestra `days`: ultimo, min, max, delta (ultimo-primo), n."""
+    since = (date.today() - timedelta(days=days)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT weight_kg, bmi, logged_at FROM weight_log
+               WHERE member = ? AND logged_at >= ?
+               ORDER BY logged_at ASC""",
+            (member, since),
+        )
+        rows = await cursor.fetchall()
+    if not rows:
+        # nessun log nella finestra: prova ultimo assoluto
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                """SELECT weight_kg, bmi, logged_at FROM weight_log
+                   WHERE member = ? ORDER BY logged_at DESC LIMIT 1""",
+                (member,),
+            )
+            last = await cursor.fetchone()
+        if not last:
+            return None
+        w, b, t = last
+        return {"latest": w, "latest_bmi": b, "latest_at": t,
+                "min": w, "max": w, "delta": 0.0, "count": 1, "days": days}
+    weights = [r[0] for r in rows]
+    first_w = weights[0]
+    last_w, last_b, last_t = rows[-1]
+    return {
+        "latest": last_w, "latest_bmi": last_b, "latest_at": last_t,
+        "min": min(weights), "max": max(weights),
+        "delta": round(last_w - first_w, 1), "count": len(rows), "days": days,
+    }
+
+
 # ---- food_diary: pasti ----
 
 async def add_meal(member: str, meal_type: str, description: str, totals: dict,

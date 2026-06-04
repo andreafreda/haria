@@ -1,29 +1,16 @@
 # HARIA — TODO (livello codice)
 
-Stato: v0.1.27. Area food completa nel core. Elenco lavori residui a livello codice.
+Stato: v0.1.28. Area food completa nel core. Elenco lavori residui a livello codice.
 
-## Food — integrazioni mancanti
+## Food — fatto (v0.1.28)
 
-- [ ] **Sync spesa → To-do HA non testato**
-  - `modules/food_diary.py` → tool `sync_shopping_to_ha` cerca entità `todo.*` e chiama `todo.add_item`.
-  - Nessuna entità `todo.*` esiste ancora in HA → mai eseguito davvero.
-  - TODO: gestire caso "nessuna lista todo" con messaggio chiaro; permettere scelta lista target (config o param); evitare duplicati (check item già presente prima di add).
+- [x] **Sync spesa → To-do HA dedup** — `sync_shopping_to_ha` ora chiama `todo.get_items`, salta item già presenti, ritorna `{ok,list,added,skipped}`. Manca solo: nessuna entità `todo.*` esiste in HA (azione utente: installare integrazione To-do/Shopping List).
+- [x] **Macro target webpanel** — `_h_diary` riga "vs target", `_h_profiles` colonne Prot./Carbo/Grassi target via `compute_macro_targets()`. Pagina `/pantry` + nav.
+- [x] **Dispensa / scorte (anti-spreco)** — tabella `pantry_items` + 5 funzioni in `memory.py`; 4 tool in `food_diary.py`; sensor MQTT `dispensa` + `dispensa_in_scadenza`; alert scheduler 08:30; vista HA "Dispensa".
 
-- [ ] **Storia peso reale**
-  - `mqtt_pub.refresh()` pubblica `peso` = snapshot `profile.weight_kg` (flat finché non cambia).
-  - `memory.get_weight_history()` esiste ma non alimenta MQTT.
-  - TODO: valutare sensor che espone ultimo peso loggato + statistica varianza (min/max/delta periodo).
-
-- [ ] **Macro target nel webpanel ingress**
-  - `webpanel.py` pagina Profili/Diario mostra macro consumati, NON i target.
-  - `compute_macro_targets()` già disponibile.
-  - TODO: aggiungere colonne/righe target + delta in `_h_profiles` / `_h_diary`.
+- [x] **Storia peso reale (v0.1.29)** — `memory.get_weight_stats(member,days)`; `mqtt_pub` pubblica peso/bmi da ultimo log reale + sensor `peso_delta_30d` / `peso_min_30d` / `peso_max_30d`.
 
 ## Food — feature backlog
-
-- [ ] **Dispensa / scorte (anti-spreco)**
-  - Nuovo modulo `modules/pantry.py`: tabella `pantry_items` (nome, qty, scadenza), tool add/list/consume/expiring.
-  - Integrazione: a fine spesa → carico dispensa; piano pasti → scala scorte; alert scadenze (scheduler).
 
 - [ ] **Budget / costi spesa (home_economics)**
   - Prezzo per voce spesa, totale settimanale/mensile, sensor MQTT `spesa_costo`.
@@ -48,4 +35,4 @@ Stato: v0.1.27. Area food completa nel core. Elenco lavori residui a livello cod
 
 - Entità food sono MQTT discovery via broker Mosquitto (`core-mosquitto`). Richiede broker attivo + integrazione MQTT.
 - `meal_plan` ora supporta override per-membro: `UNIQUE(date, meal_type, member)`, `member=''` = comune.
-- Dashboard HA: `haria-cibo` (Settimana / Mese / Spesa / Andrea / Marina).
+- Dashboard HA: `haria-cibo` (Settimana / Mese / Spesa / Dispensa / Andrea / Marina).
