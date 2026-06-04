@@ -89,10 +89,12 @@ async def _food_morning():
     plan = await get_meal_plan(today, today)
     if not plan:
         return
-    plan.sort(key=lambda m: _MEAL_ORDER.get(m["meal_type"], 9))
+    plan.sort(key=lambda m: (_MEAL_ORDER.get(m["meal_type"], 9), m.get("member") or ""))
     lines = ["🍽️ Oggi si mangia:"]
     for m in plan:
-        line = f"• {m['meal_type'].capitalize()}: {m['items']}"
+        who = (m.get("member") or "").strip()
+        prefix = f"{who.capitalize()} — " if who else ""
+        line = f"• {m['meal_type'].capitalize()}: {prefix}{m['items']}"
         if m.get("recipe"):
             line += f" — {m['recipe']}"
         if m.get("kcal"):

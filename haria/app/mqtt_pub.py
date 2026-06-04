@@ -44,6 +44,15 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9_]+", "_", (s or "").strip().lower()).strip("_")
 
 
+def _fmt_plan_item(m: dict) -> str:
+    """Formatta voce piano: prefisso nome se override personale, kcal se nota."""
+    who = (m.get("member") or "").strip()
+    s = f"{who.capitalize()}: {m['items']}" if who else m["items"]
+    if m.get("kcal"):
+        s += f" ({round(m['kcal'])} kcal)"
+    return s
+
+
 async def _mqtt_config() -> dict | None:
     """Recupera credenziali broker dal Supervisor."""
     token = os.environ.get("SUPERVISOR_TOKEN")
@@ -197,14 +206,15 @@ async def refresh():
         _pub(f"{base}/carbo_target", macros["carbs_target_g"] if macros else "")
         _pub(f"{base}/grassi_target", macros["fat_target_g"] if macros else "")
 
-    # piano oggi
+    # piano oggi (comune + override personali)
     plan = await get_meal_plan(today, today)
-    plan.sort(key=lambda x: _MEAL_ORDER.get(x["meal_type"], 9))
-    pasti = {m["meal_type"]: m for m in plan}
-    attr = {
-        mt: (f"{pasti[mt]['items']}" + (f" ({round(pasti[mt]['kcal'])} kcal)" if pasti[mt].get("kcal") else ""))
-        for mt in pasti
-    }
+    plan.sort(key=lambda x: (_MEAL_ORDER.get(x["meal_type"], 9), x.get("member") or ""))
+    attr = {}
+    for mt in ("colazione", "pranzo", "snack", "cena"):
+        grp = [m for m in plan if m["meal_type"] == mt]
+        if not grp:
+            continue
+        attr[mt] = "; ".join(_fmt_plan_item(m) for m in grp)
     _pub(f"{_BASE}/piano_oggi/state", f"{len(plan)} pasti" if plan else "nessun piano")
     _pub(f"{_BASE}/piano_oggi/attr", attr)
 
@@ -218,8 +228,11 @@ async def refresh():
     giorni = {}
     for d in days:
         iso = d.isoformat()
-        ms = sorted(by_day.get(iso, []), key=lambda x: _MEAL_ORDER.get(x["meal_type"], 9))
-        giorni[iso] = "; ".join(f"{x['meal_type']}: {x['items']}" for x in ms) if ms else ""
+        ms = sorted(by_day.get(iso, []),
+                    key=lambda x: (_MEAL_ORDER.get(x["meal_type"], 9), x.get("member") or ""))
+        giorni[iso] = "; ".join(
+            f"{x['meal_type']}: {_fmt_plan_item(x)}" for x in ms
+        ) if ms else ""
     _pub(f"{_BASE}/piano_settimana/state", f"{len(wplan)} pasti")
     _pub(f"{_BASE}/piano_settimana/attr", giorni)
 

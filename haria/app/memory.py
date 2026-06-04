@@ -86,11 +86,13 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL,
                 meal_type TEXT NOT NULL,
+                member TEXT NOT NULL DEFAULT '',
                 items TEXT NOT NULL,
                 recipe TEXT,
                 servings INTEGER,
+                kcal REAL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(date, meal_type)
+                UNIQUE(date, meal_type, member)
             );
             CREATE TABLE IF NOT EXISTS hydration_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,6 +123,29 @@ async def init_db():
             cols = [r[1] for r in await cur.fetchall()]
             if col not in cols:
                 await db.execute(ddl)
+        # migrazione meal_plan: aggiungi member + UNIQUE(date,meal_type,member).
+        # SQLite non droppa constraint -> rebuild tabella.
+        cur = await db.execute("PRAGMA table_info(meal_plan)")
+        mp_cols = [r[1] for r in await cur.fetchall()]
+        if "member" not in mp_cols:
+            await db.executescript("""
+                CREATE TABLE meal_plan_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    meal_type TEXT NOT NULL,
+                    member TEXT NOT NULL DEFAULT '',
+                    items TEXT NOT NULL,
+                    recipe TEXT,
+                    servings INTEGER,
+                    kcal REAL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(date, meal_type, member)
+                );
+                INSERT INTO meal_plan_new (id, date, meal_type, member, items, recipe, servings, kcal, updated_at)
+                    SELECT id, date, meal_type, '', items, recipe, servings, kcal, updated_at FROM meal_plan;
+                DROP TABLE meal_plan;
+                ALTER TABLE meal_plan_new RENAME TO meal_plan;
+            """)
         await db.commit()
 
 
@@ -372,17 +397,21 @@ async def get_meals(member: str, date_from: str | None = None, date_to: str | No
 
 async def set_plan_meal(date: str, meal_type: str, items: str,
                         recipe: str | None = None, servings: int | None = None,
-                        kcal: float | None = None):
-    """Inserisce o sostituisce un pasto del piano (chiave date+meal_type)."""
+                        kcal: float | None = None, member: str | None = None):
+    """Inserisce o sostituisce un pasto del piano (chiave date+meal_type+member).
+
+    member vuoto/None = piano comune. member valorizzato = override personale.
+    """
+    member = (member or "").strip().lower()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            """INSERT INTO meal_plan (date, meal_type, items, recipe, servings, kcal, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-               ON CONFLICT(date, meal_type) DO UPDATE SET
+            """INSERT INTO meal_plan (date, meal_type, member, items, recipe, servings, kcal, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(date, meal_type, member) DO UPDATE SET
                  items=excluded.items, recipe=excluded.recipe,
                  servings=excluded.servings, kcal=excluded.kcal,
                  updated_at=CURRENT_TIMESTAMP""",
-            (date, meal_type, items, recipe, servings, kcal),
+            (date, meal_type, member, items, recipe, servings, kcal),
         )
         await db.commit()
 
@@ -390,14 +419,14 @@ async def set_plan_meal(date: str, meal_type: str, items: str,
 async def get_meal_plan(date_from: str, date_to: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """SELECT date, meal_type, items, recipe, servings, kcal FROM meal_plan
-               WHERE date >= ? AND date <= ? ORDER BY date, meal_type""",
+            """SELECT date, meal_type, member, items, recipe, servings, kcal FROM meal_plan
+               WHERE date >= ? AND date <= ? ORDER BY date, meal_type, member""",
             (date_from, date_to),
         )
         rows = await cursor.fetchall()
     return [
-        {"date": r[0], "meal_type": r[1], "items": r[2], "recipe": r[3],
-         "servings": r[4], "kcal": r[5]}
+        {"date": r[0], "meal_type": r[1], "member": r[2], "items": r[3],
+         "recipe": r[4], "servings": r[5], "kcal": r[6]}
         for r in rows
     ]
 

@@ -61,17 +61,20 @@ async def _h_plan(request):
         body += "<div class='card muted'>Nessun piano per questa settimana. Chiedi a HARIA su Telegram: «pianifica la settimana».</div>"
     for i, d in enumerate(days):
         iso = d.isoformat()
-        meals = sorted(by_day.get(iso, []), key=lambda m: _MEAL_ORDER.get(m["meal_type"], 9))
+        meals = sorted(by_day.get(iso, []),
+                       key=lambda m: (_MEAL_ORDER.get(m["meal_type"], 9), m.get("member") or ""))
         body += f"<div class='card'><b>{_GIORNI[i]} {d.strftime('%d/%m')}</b>"
         if not meals:
             body += " <span class='muted'>— niente pianificato</span>"
         else:
-            day_kcal = sum(m["kcal"] or 0 for m in meals)
+            day_kcal = sum(m["kcal"] or 0 for m in meals if not (m.get("member") or "").strip())
             if day_kcal:
                 body += f" <span class='kcal'>{round(day_kcal)} kcal</span>"
-            body += "<table><tr><th>Pasto</th><th>Portate</th><th>Ricetta</th><th>Porz.</th><th>kcal</th></tr>"
+            body += "<table><tr><th>Pasto</th><th>Chi</th><th>Portate</th><th>Ricetta</th><th>Porz.</th><th>kcal</th></tr>"
             for m in meals:
-                body += (f"<tr><td>{m['meal_type']}</td><td>{m['items'] or ''}</td>"
+                who = (m.get("member") or "").strip()
+                who_lbl = who.capitalize() if who else "<span class='muted'>comune</span>"
+                body += (f"<tr><td>{m['meal_type']}</td><td>{who_lbl}</td><td>{m['items'] or ''}</td>"
                          f"<td class='muted'>{m['recipe'] or ''}</td><td>{m['servings'] or ''}</td>"
                          f"<td>{round(m['kcal']) if m['kcal'] else ''}</td></tr>")
             body += "</table>"
