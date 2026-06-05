@@ -163,6 +163,10 @@ async def init_db():
             "UPDATE news_blocklist SET user_id = replace(user_id, 'ha_chat_', '') "
             "WHERE user_id LIKE 'ha_chat_%'"
         )
+        await db.execute(
+            "UPDATE reminders SET user_id = replace(user_id, 'ha_chat_', '') "
+            "WHERE user_id LIKE 'ha_chat_%'"
+        )
         # migrazioni leggere: aggiungi colonne se mancano
         for table, col, ddl in [
             ("meal_plan", "kcal", "ALTER TABLE meal_plan ADD COLUMN kcal REAL"),

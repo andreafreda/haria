@@ -603,7 +603,16 @@ async def _overview(inputs: dict, user_id: str) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
+def _norm_uid(user_id: str) -> str:
+    """Normalizza l'user_id al chat_id numerico (la chat web usa 'ha_chat_<id>').
+    I promemoria vanno consegnati via Telegram con int(chat_id)."""
+    if user_id and user_id.startswith("ha_chat_"):
+        return user_id[len("ha_chat_"):]
+    return user_id
+
+
 async def handle(name: str, inputs: dict, user_id: str) -> str:
+    user_id = _norm_uid(user_id)
     if name == "agenda_overview":
         return await _overview(inputs, user_id)
     for h in (_h_reminders, _h_tasks, _h_events):
