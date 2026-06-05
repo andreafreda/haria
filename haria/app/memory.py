@@ -177,6 +177,7 @@ async def init_db():
         )
         # migrazioni leggere: aggiungi colonne se mancano
         for table, col, ddl in [
+            ("briefings", "num_news", "ALTER TABLE briefings ADD COLUMN num_news INTEGER DEFAULT 5"),
             ("meal_plan", "kcal", "ALTER TABLE meal_plan ADD COLUMN kcal REAL"),
             ("shopping_items", "price", "ALTER TABLE shopping_items ADD COLUMN price REAL"),
             ("meals", "fiber_g", "ALTER TABLE meals ADD COLUMN fiber_g REAL"),
@@ -511,24 +512,25 @@ async def update_reminder(reminder_id: int, user_id: str | None = None,
 # ---- briefing news ----
 
 def _briefing_row(r) -> dict:
-    return {"id": r[0], "user_id": r[1], "topics": r[2], "cron": r[3]}
+    return {"id": r[0], "user_id": r[1], "topics": r[2], "cron": r[3],
+            "num_news": r[4] if len(r) > 4 and r[4] is not None else 5}
 
 
-async def add_briefing(user_id: str, topics: str, cron: str) -> dict:
+async def add_briefing(user_id: str, topics: str, cron: str, num_news: int = 5) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO briefings (user_id, topics, cron) VALUES (?, ?, ?)",
-            (user_id, topics, cron),
+            "INSERT INTO briefings (user_id, topics, cron, num_news) VALUES (?, ?, ?, ?)",
+            (user_id, topics, cron, int(num_news)),
         )
         await db.commit()
         bid = cursor.lastrowid
-    return {"id": bid, "user_id": user_id, "topics": topics, "cron": cron}
+    return {"id": bid, "user_id": user_id, "topics": topics, "cron": cron, "num_news": int(num_news)}
 
 
 async def get_active_briefings() -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT id, user_id, topics, cron FROM briefings WHERE active = 1"
+            "SELECT id, user_id, topics, cron, num_news FROM briefings WHERE active = 1"
         )
         rows = await cursor.fetchall()
     return [_briefing_row(r) for r in rows]
@@ -537,7 +539,7 @@ async def get_active_briefings() -> list[dict]:
 async def get_user_briefings(user_id: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT id, user_id, topics, cron FROM briefings WHERE active = 1 AND user_id = ?",
+            "SELECT id, user_id, topics, cron, num_news FROM briefings WHERE active = 1 AND user_id = ?",
             (user_id,),
         )
         rows = await cursor.fetchall()
@@ -547,7 +549,7 @@ async def get_user_briefings(user_id: str) -> list[dict]:
 async def get_briefing(briefing_id: int) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         row = await (await db.execute(
-            "SELECT id, user_id, topics, cron FROM briefings WHERE id = ? AND active = 1",
+            "SELECT id, user_id, topics, cron, num_news FROM briefings WHERE id = ? AND active = 1",
             (int(briefing_id),),
         )).fetchone()
     return _briefing_row(row) if row else None
@@ -566,13 +568,16 @@ async def deactivate_briefing(briefing_id: int, user_id: str | None = None) -> b
 
 
 async def update_briefing(briefing_id: int, user_id: str | None = None,
-                          topics: str | None = None, cron: str | None = None) -> dict | None:
+                          topics: str | None = None, cron: str | None = None,
+                          num_news: int | None = None) -> dict | None:
     sets: list[str] = []
     params: list = []
     if topics is not None:
         sets.append("topics = ?"); params.append(topics)
     if cron is not None:
         sets.append("cron = ?"); params.append(cron)
+    if num_news is not None:
+        sets.append("num_news = ?"); params.append(int(num_news))
     if not sets:
         return None
     where = "id = ? AND active = 1"
@@ -588,7 +593,7 @@ async def update_briefing(briefing_id: int, user_id: str | None = None,
         if cursor.rowcount == 0:
             return None
         row = await (await db.execute(
-            "SELECT id, user_id, topics, cron FROM briefings WHERE id = ?",
+            "SELECT id, user_id, topics, cron, num_news FROM briefings WHERE id = ?",
             (int(briefing_id),),
         )).fetchone()
     return _briefing_row(row) if row else None

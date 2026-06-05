@@ -58,18 +58,24 @@ def _build_query(topic: str, sources: list[str], blocks: list[str]) -> str:
     return q
 
 
-async def generate(topics: str, user_id: str = "") -> str:
-    """Cerca notizie per ogni tema (con filtri fonte) e produce un breve briefing."""
+async def generate(topics: str, user_id: str = "", num_news: int = _RESULTS_PER_TOPIC) -> str:
+    """Cerca notizie per ogni tema (con filtri fonte) e produce un breve briefing.
+
+    num_news = numero MASSIMO di notizie per tema; se ne trova meno, ne mostra meno."""
     items = _parse_topics(topics)
     if not items:
         return "Nessun tema configurato per il briefing."
+    try:
+        max_n = max(1, int(num_news))
+    except (TypeError, ValueError):
+        max_n = _RESULTS_PER_TOPIC
     blocks = await get_news_blocks(user_id) if user_id else []
     blocks_out: list[str] = []
     for it in items:
         query = _build_query(it["topic"], it.get("sources", []), blocks)
-        results = await web_search.search_news(query, _RESULTS_PER_TOPIC)
+        results = await web_search.search_news(query, max_n)
         if not results:  # fallback se l'endpoint news non torna nulla
-            results = await web_search.search(query, _RESULTS_PER_TOPIC)
+            results = await web_search.search(query, max_n)
         if not results:
             continue
         lines = [f"# Tema: {it['topic']}"]
@@ -87,7 +93,7 @@ async def generate(topics: str, user_id: str = "") -> str:
 
     raw = "\n\n".join(blocks_out)
     from claude_engine import client, MODEL
-    prompt = prompts.get("news_briefing", raw=raw)
+    prompt = prompts.get("news_briefing", raw=raw, max_news=max_n)
     resp = await client.messages.create(
         model=MODEL, max_tokens=900,
         messages=[{"role": "user", "content": prompt}],
@@ -124,6 +130,7 @@ TOOLS = [
                     },
                 },
                 "cron": {"type": "string", "description": "Espressione cron standard (min ora giorno mese giorno-settimana)"},
+                "num_news": {"type": "integer", "description": "Numero MASSIMO di notizie per tema (default 5). Se ne trova meno, ne manda meno."},
             },
             "required": ["topics", "cron"],
         },
@@ -155,6 +162,7 @@ TOOLS = [
                     },
                 },
                 "cron": {"type": "string"},
+                "num_news": {"type": "integer", "description": "Numero MASSIMO di notizie per tema."},
             },
             "required": ["id"],
         },
@@ -223,7 +231,8 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
     user_id = _norm_uid(user_id)
     if name == "create_briefing":
         topics_json = _dump_topics(inputs["topics"])
-        b = await add_briefing(user_id, topics_json, inputs["cron"])
+        b = await add_briefing(user_id, topics_json, inputs["cron"],
+                               int(inputs.get("num_news") or 5))
         ok = scheduler.schedule_briefing(b)
         if not ok:
             await deactivate_briefing(b["id"], user_id)
@@ -238,7 +247,8 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
 
     if name == "update_briefing":
         topics_json = _dump_topics(inputs["topics"]) if "topics" in inputs else None
-        b = await update_briefing(int(inputs["id"]), user_id, topics_json, inputs.get("cron"))
+        nn = int(inputs["num_news"]) if inputs.get("num_news") is not None else None
+        b = await update_briefing(int(inputs["id"]), user_id, topics_json, inputs.get("cron"), nn)
         if not b:
             return json.dumps({"ok": False, "error": "Briefing non trovato o nessun campo"}, ensure_ascii=False)
         scheduler.cancel_briefing(b["id"])

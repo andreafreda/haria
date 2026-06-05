@@ -446,6 +446,7 @@ def _briefing_form(b: dict | None) -> str:
     """Form add (b=None) o edit (b=briefing dict con topics già parsati in JSON)."""
     bid = b["id"] if b else ""
     cron = _e(b["cron"]) if b else ""
+    num_news = _e(b.get("num_news", 5)) if b else "5"
     topics_txt = _e(_topics_to_text(b["topics"])) if b else ""
     title = f"Briefing #{b['id']}" if b else "Nuovo briefing"
     del_btn = (f"<button type='button' class='btn brief-del' data-id='{b['id']}' "
@@ -457,6 +458,8 @@ def _briefing_form(b: dict | None) -> str:
             f"padding:6px;border:1px solid #ccc;border-radius:6px;font-size:14px'>{topics_txt}</textarea></div>"
             "<div class='efield'><label>Cron (min ora gg mese gg-sett)</label>"
             f"<input type='text' name='cron' value='{cron}' placeholder='0 8 * * *' style='width:160px'></div>"
+            "<div class='efield'><label>Max notizie / tema</label>"
+            f"<input type='number' name='num_news' min='1' max='20' value='{num_news}' style='width:80px'></div>"
             "<br><button class='btn' type='submit'>Salva</button>"
             f"{del_btn}<span class='muted savemsg' style='margin-left:10px'></span></form>")
 
@@ -482,7 +485,8 @@ async def _h_briefings(request):
     body += """<script>
 async function briefSave(f){
   const msg=f.querySelector('.savemsg'),btn=f.querySelector('button[type=submit]');
-  const d={topics:f.querySelector('[name=topics]').value,cron:f.querySelector('[name=cron]').value};
+  const d={topics:f.querySelector('[name=topics]').value,cron:f.querySelector('[name=cron]').value,
+    num_news:parseInt(f.querySelector('[name=num_news]').value)||5};
   if(f.dataset.id)d.id=parseInt(f.dataset.id);
   btn.disabled=true;msg.textContent='…';
   try{const r=await fetch('./api/briefings/save',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -515,17 +519,21 @@ async def _h_briefings_save(request):
         return web.json_response({"error": "Indica almeno un tema"}, status=400)
     if not cron:
         return web.json_response({"error": "Indica il cron"}, status=400)
+    try:
+        num_news = max(1, min(20, int(data.get("num_news") or 5)))
+    except (TypeError, ValueError):
+        num_news = 5
     topics_json = news._dump_topics(topics)
     bid = data.get("id")
     if bid:
-        b = await update_briefing(int(bid), uid, topics_json, cron)
+        b = await update_briefing(int(bid), uid, topics_json, cron, num_news)
         if not b:
             return web.json_response({"error": "Briefing non trovato"}, status=404)
         scheduler.cancel_briefing(b["id"])
         if not scheduler.schedule_briefing(b):
             return web.json_response({"error": "Cron non valido"}, status=400)
         return web.json_response({"ok": True, "id": b["id"]})
-    b = await add_briefing(uid, topics_json, cron)
+    b = await add_briefing(uid, topics_json, cron, num_news)
     if not scheduler.schedule_briefing(b):
         await deactivate_briefing(b["id"], uid)
         return web.json_response({"error": "Cron non valido"}, status=400)

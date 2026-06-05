@@ -105,10 +105,10 @@ def cancel_job(reminder_id: int):
 
 # ---- briefing news ----
 
-async def _fire_briefing(briefing_id: int, user_id: str, topics: str):
+async def _fire_briefing(briefing_id: int, user_id: str, topics: str, num_news: int = 5):
     try:
         from modules import news
-        text = await news.generate(topics, user_id)
+        text = await news.generate(topics, user_id, num_news)
         await _bot.send_message(chat_id=int(user_id), text=text)
         logger.info("Briefing %s inviato a %s", briefing_id, user_id)
     except Exception as e:
@@ -123,7 +123,7 @@ def _schedule_briefing_one(b: dict) -> bool:
         return False
     _scheduler.add_job(
         _fire_briefing, trigger, id=f"briefing_{b['id']}", replace_existing=True,
-        args=[b["id"], b["user_id"], b["topics"]],
+        args=[b["id"], b["user_id"], b["topics"], b.get("num_news", 5)],
     )
     return True
 
