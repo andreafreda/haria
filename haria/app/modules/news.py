@@ -206,7 +206,16 @@ def _dump_topics(topics) -> str:
     return json.dumps(norm, ensure_ascii=False)
 
 
+def _norm_uid(user_id: str) -> str:
+    """Normalizza l'user_id al chat_id numerico (la chat web usa 'ha_chat_<id>').
+    I briefing vanno consegnati via Telegram con int(chat_id)."""
+    if user_id and user_id.startswith("ha_chat_"):
+        return user_id[len("ha_chat_"):]
+    return user_id
+
+
 async def handle(name: str, inputs: dict, user_id: str) -> str:
+    user_id = _norm_uid(user_id)
     if name == "create_briefing":
         topics_json = _dump_topics(inputs["topics"])
         b = await add_briefing(user_id, topics_json, inputs["cron"])

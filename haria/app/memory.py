@@ -152,6 +152,17 @@ async def init_db():
                 UNIQUE(user_id, domain)
             );
         """)
+        # migrazione: i briefing/blocklist creati dalla chat web avevano user_id
+        # 'ha_chat_<chatid>' (non consegnabile via Telegram, int() crasha). Normalizza
+        # al chat_id numerico così coincide con Telegram e col pannello web.
+        await db.execute(
+            "UPDATE briefings SET user_id = replace(user_id, 'ha_chat_', '') "
+            "WHERE user_id LIKE 'ha_chat_%'"
+        )
+        await db.execute(
+            "UPDATE news_blocklist SET user_id = replace(user_id, 'ha_chat_', '') "
+            "WHERE user_id LIKE 'ha_chat_%'"
+        )
         # migrazioni leggere: aggiungi colonne se mancano
         for table, col, ddl in [
             ("meal_plan", "kcal", "ALTER TABLE meal_plan ADD COLUMN kcal REAL"),
