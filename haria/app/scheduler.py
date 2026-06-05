@@ -2,6 +2,7 @@
 briefing news cron, e job proattivi food_diary (piano del giorno, scadenze
 dispensa, report settimanale) + refresh sensori MQTT."""
 import logging
+import re
 from datetime import datetime, date, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
@@ -19,6 +20,30 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 _bot = None
 
+# Unix crontab usa dow 0-6 = dom-sab (0/7=dom). APScheduler usa 0-6 = lun-dom.
+# from_crontab NON converte -> sfasamento di un giorno. Mappiamo i numeri Unix
+# ai nomi APScheduler (non ambigui) e costruiamo il CronTrigger a mano.
+_DOW = {"0": "sun", "7": "sun", "1": "mon", "2": "tue", "3": "wed",
+        "4": "thu", "5": "fri", "6": "sat"}
+
+
+def _conv_dow(field: str) -> str:
+    """Converte i numeri dow Unix in nomi APScheduler (gestisce *, liste, range)."""
+    if field == "*":
+        return "*"
+    return re.sub(r"\d+", lambda m: _DOW.get(m.group(0), m.group(0)), field)
+
+
+def _cron_trigger(expr: str) -> CronTrigger:
+    """Crea un CronTrigger da un'espressione crontab standard a 5 campi,
+    con dow in semantica Unix (5=venerdì). Usa la tz dello scheduler."""
+    parts = expr.split()
+    if len(parts) != 5:
+        raise ValueError(f"cron deve avere 5 campi, ricevuto: {expr!r}")
+    minute, hour, dom, month, dow = parts
+    return CronTrigger(minute=minute, hour=hour, day=dom, month=month,
+                       day_of_week=_conv_dow(dow))
+
 
 async def _fire(reminder_id: int, user_id: str, message: str, recurring: str | None):
     try:
@@ -35,7 +60,7 @@ def _schedule_one(r: dict) -> bool:
     job_id = f"reminder_{rid}"
     if r["recurring"]:
         try:
-            trigger = CronTrigger.from_crontab(r["recurring"])
+            trigger = _cron_trigger(r["recurring"])
         except ValueError as e:
             logger.warning("Cron non valido per promemoria %s: %s", rid, e)
             return False
@@ -92,7 +117,7 @@ async def _fire_briefing(briefing_id: int, user_id: str, topics: str):
 
 def _schedule_briefing_one(b: dict) -> bool:
     try:
-        trigger = CronTrigger.from_crontab(b["cron"])
+        trigger = _cron_trigger(b["cron"])
     except ValueError as e:
         logger.warning("Cron non valido per briefing %s: %s", b["id"], e)
         return False
