@@ -107,7 +107,7 @@ def cancel_job(reminder_id: int):
 
 async def _fire_briefing(briefing_id: int, user_id: str, topics: str):
     try:
-        import news
+        from modules import news
         text = await news.generate(topics, user_id)
         await _bot.send_message(chat_id=int(user_id), text=text)
         logger.info("Briefing %s inviato a %s", briefing_id, user_id)
