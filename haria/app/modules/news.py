@@ -67,7 +67,9 @@ async def generate(topics: str, user_id: str = "") -> str:
     blocks_out: list[str] = []
     for it in items:
         query = _build_query(it["topic"], it.get("sources", []), blocks)
-        results = await web_search.search(query, _RESULTS_PER_TOPIC)
+        results = await web_search.search_news(query, _RESULTS_PER_TOPIC)
+        if not results:  # fallback se l'endpoint news non torna nulla
+            results = await web_search.search(query, _RESULTS_PER_TOPIC)
         if not results:
             continue
         lines = [f"# Tema: {it['topic']}"]
@@ -75,7 +77,10 @@ async def generate(topics: str, user_id: str = "") -> str:
             title = r.get("title") or ""
             snippet = r.get("snippet") or r.get("body") or ""
             url = r.get("url") or r.get("href") or ""
-            lines.append(f"- {title}: {snippet} ({url})")
+            date = r.get("date") or ""
+            source = r.get("source") or ""
+            meta = " | ".join(x for x in (date, source) if x)
+            lines.append(f"- {title}\n  data: {meta}\n  {snippet} ({url})")
         blocks_out.append("\n".join(lines))
     if not blocks_out:
         return "Nessuna notizia trovata per i temi configurati."

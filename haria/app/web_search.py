@@ -18,3 +18,23 @@ async def search(query: str, max_results: int = 5) -> list[dict]:
         {"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")}
         for r in raw
     ]
+
+
+def _news_sync(query: str, max_results: int) -> list[dict]:
+    with DDGS() as ddgs:
+        return list(ddgs.news(query, region="it-it", max_results=max_results))
+
+
+async def search_news(query: str, max_results: int = 5) -> list[dict]:
+    """Come search() ma usa l'endpoint news: include data di pubblicazione e fonte."""
+    raw = await asyncio.to_thread(_news_sync, query, max_results)
+    return [
+        {
+            "title": r.get("title", ""),
+            "url": r.get("url", "") or r.get("href", ""),
+            "snippet": r.get("body", ""),
+            "date": r.get("date", ""),
+            "source": r.get("source", ""),
+        }
+        for r in raw
+    ]
