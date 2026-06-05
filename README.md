@@ -3,7 +3,8 @@
 Addon Home Assistant: assistente AI personale basato su Claude (Anthropic),
 accessibile via **Telegram** e via **pannello web ingress** in HA. Controlla la
 casa, gestisce agenda/promemoria, diario alimentare famigliare, bollette, ricerca
-web, e mantiene una **memoria a lungo termine** per ogni utente.
+web, **briefing notizie personalizzati**, e mantiene una **memoria a lungo termine**
+per ogni utente.
 
 Nome = acronimo **H**ome **A**ssistant **R**eactive **I**ntelligent **A**gent. Si pronuncia "Aria".
 
@@ -191,6 +192,31 @@ Haiku e invia su Telegram all'orario cron impostato.
   `block_news_source` / `unblock_news_source` / `list_news_sources`.
 - Per-utente; job dinamici APScheduler (`briefing_{id}`), ricaricati al boot da DB
   (tabelle `briefings`, `news_blocklist`). Cron completo supportato.
+
+**Come si usa** (linguaggio naturale, HARIA traduce in cron + struttura temi):
+```
+Tu:  «ogni mattina alle 7:30 mandami le notizie su intelligenza artificiale
+      e di calcio solo dalla gazzetta»
+HARIA: crea un briefing con cron "30 7 * * *" e temi
+      [{topic: "intelligenza artificiale"}, {topic: "calcio", sources: ["gazzetta.it"]}]
+
+Tu:  «non darmi mai più notizie da example.com»
+HARIA: block_news_source("example.com") — escluso da OGNI briefing, per sempre
+
+Tu:  «togli il calcio dal briefing delle 7:30»
+HARIA: update_briefing(id, topics=[{topic: "intelligenza artificiale"}])
+
+Tu:  «che briefing ho?»
+HARIA: list_briefings — mostra id, temi, fonti, orario
+```
+
+**Flusso interno a ogni schedulazione**:
+1. APScheduler fa scattare il job `briefing_{id}` all'orario cron.
+2. Per ogni tema costruisce la query: `"{tema} notizie ultime"` + `(site:…)` se ha
+   whitelist + `-site:…` per ogni dominio in blacklist globale dell'utente.
+3. `web_search` (DuckDuckGo) raccoglie titoli/snippet/link per tema.
+4. Haiku condensa tutto in un riassunto breve raggruppato per tema, con i link fonte.
+5. Invio su Telegram all'utente proprietario del briefing.
 
 ### `multi_user` — messaggi tra membri
 `send_message_to_user(member, message)` — HARIA scrive proattivamente su Telegram a un altro
