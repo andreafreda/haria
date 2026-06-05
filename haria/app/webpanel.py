@@ -47,9 +47,19 @@ _GIORNI = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
 
 _CSS = """
 body{font-family:system-ui,sans-serif;margin:0;background:#f4f6f8;color:#222}
-header{background:#3367d6;color:#fff;padding:14px 20px;font-size:20px;font-weight:600}
-nav{background:#fff;padding:8px 20px;border-bottom:1px solid #ddd}
-nav a{margin-right:16px;color:#3367d6;text-decoration:none;font-weight:500}
+header{background:linear-gradient(90deg,#2a52be,#3367d6);color:#fff;padding:16px 20px;font-size:20px;font-weight:600}
+header .tagline{font-size:12px;font-weight:400;opacity:.85;margin-left:10px}
+nav{background:#fff;padding:10px 20px;border-bottom:1px solid #ddd;display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+nav a{margin-right:12px;color:#3367d6;text-decoration:none;font-weight:500;font-size:14px}
+nav a:hover{text-decoration:underline}
+nav .sep{color:#bbb;font-size:11px;margin:0 10px 0 4px;text-transform:uppercase;letter-spacing:.5px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin-bottom:8px}
+.tile{display:block;background:#fff;border-radius:10px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.1);text-decoration:none;color:#222;transition:transform .1s,box-shadow .1s}
+.tile:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.tile .ic{font-size:28px}
+.tile .t{font-weight:600;margin-top:8px;color:#3367d6}
+.tile .d{font-size:13px;color:#888;margin-top:4px}
+.sec{margin:24px 0 8px;color:#3367d6;font-size:15px;font-weight:600;border-bottom:1px solid #dde;padding-bottom:4px}
 main{padding:20px;max-width:1100px;margin:0 auto}
 h2{margin-top:28px;color:#3367d6}
 table{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:16px}
@@ -83,8 +93,8 @@ def _page(title: str, body: str) -> web.Response:
     page = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
-<header>🤖 HARIA — Diario Alimentare</header>
-<nav><a href="./">Piano</a><a href="./month">Mese</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./briefings">Notizie</a><a href="./chat">Chat</a><a href="./logs">Log</a><a href="./export.csv">Export CSV</a></nav>
+<header>🤖 HARIA <span class="tagline">Home Assistant Reactive Intelligent Agent</span></header>
+<nav><a href="./">🏠 Home</a><a href="./chat">💬 Chat</a><a href="./briefings">📰 Notizie</a><span class="sep">Cibo</span><a href="./plan">🍽️ Piano</a><a href="./month">📅 Mese</a><a href="./diary">📖 Diario</a><a href="./profiles">👤 Profili</a><a href="./shopping">🛒 Spesa</a><a href="./pantry">📦 Dispensa</a><span class="sep">Sistema</span><a href="./logs">⚠️ Log</a><a href="./export.csv">⬇️ Export</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=page, content_type="text/html")
 
@@ -107,6 +117,42 @@ def _day_card(label: str, meals: list[dict]) -> str:
                 f"<td>{round(m['kcal']) if m['kcal'] else ''}</td></tr>")
     out += "</table></div>"
     return out
+
+
+def _tile(href: str, ic: str, title: str, desc: str) -> str:
+    return (f"<a class='tile' href='{href}'><div class='ic'>{ic}</div>"
+            f"<div class='t'>{_e(title)}</div><div class='d'>{_e(desc)}</div></a>")
+
+
+async def _h_home(request):
+    u = _chat_user() or {}
+    name = _e(u.get("name") or "")
+    today = date.today().isoformat()
+    plan = await get_meal_plan(today, today)
+    briefs = await get_active_briefings()
+    errs = await get_error_logs(50)
+    greet = f"Ciao {name}! " if name else ""
+    body = f"<h2>{greet}Benvenuto in HARIA</h2>"
+    body += ("<div class='card muted'>Home Assistant Reactive Intelligent Agent — "
+             "assistente AI via Telegram e chat HA: notizie, agenda, diario alimentare, "
+             "ricerca web e altro.</div>")
+    body += "<div class='sec'>Generale</div><div class='grid'>"
+    body += _tile("./chat", "💬", "Chat", "Parla con HARIA")
+    body += _tile("./briefings", "📰", "Notizie", f"{len(briefs)} briefing attivi")
+    body += "</div>"
+    body += "<div class='sec'>Cibo</div><div class='grid'>"
+    body += _tile("./plan", "🍽️", "Piano", f"{len(plan)} pasti oggi")
+    body += _tile("./month", "📅", "Mese", "Vista mensile")
+    body += _tile("./diary", "📖", "Diario", "Cosa hai mangiato")
+    body += _tile("./profiles", "👤", "Profili", "Peso e obiettivi")
+    body += _tile("./shopping", "🛒", "Spesa", "Lista della spesa")
+    body += _tile("./pantry", "📦", "Dispensa", "Scorte")
+    body += "</div>"
+    body += "<div class='sec'>Sistema</div><div class='grid'>"
+    body += _tile("./logs", "⚠️", "Log", f"{len(errs)} errori recenti")
+    body += _tile("./export.csv", "⬇️", "Export CSV", "Scarica il diario")
+    body += "</div>"
+    return _page("Home", body)
 
 
 async def _h_plan(request):
@@ -681,7 +727,8 @@ async def _h_export(request):
 
 def build_web_app() -> web.Application:
     app = web.Application()
-    app.router.add_get("/", _h_plan)
+    app.router.add_get("/", _h_home)
+    app.router.add_get("/plan", _h_plan)
     app.router.add_get("/month", _h_month)
     app.router.add_get("/diary", _h_diary)
     app.router.add_get("/profiles", _h_profiles)
