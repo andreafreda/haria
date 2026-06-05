@@ -184,10 +184,13 @@ Briefing notizie ricorrente, **temi e orari definiti dall'utente** via chat (non
 hardcoded). Per ogni briefing HARIA cerca sul web i temi indicati, riassume con
 Haiku e invia su Telegram all'orario cron impostato.
 - `create_briefing(topics, cron)` — es. "ogni mattina alle 7:30 notizie su AI e Inter".
-  HARIA converte l'orario in espressione cron.
-- `list_briefings` / `update_briefing(id, …)` / `delete_briefing(id)`.
+  HARIA converte l'orario in espressione cron. `topics` = lista JSON `[{topic, sources?}]`.
+- Filtri fonte: **whitelist per-tema** (un tema può limitarsi a certi siti, `site:`)
+  e **blacklist globale per-utente** (`block_news_source` → escluso da tutti i temi, `-site:`).
+- `list_briefings` / `update_briefing(id, …)` / `delete_briefing(id)`;
+  `block_news_source` / `unblock_news_source` / `list_news_sources`.
 - Per-utente; job dinamici APScheduler (`briefing_{id}`), ricaricati al boot da DB
-  (tabella `briefings`). Cron completo supportato.
+  (tabelle `briefings`, `news_blocklist`). Cron completo supportato.
 
 ### `multi_user` — messaggi tra membri
 `send_message_to_user(member, message)` — HARIA scrive proattivamente su Telegram a un altro
@@ -222,7 +225,8 @@ membro della famiglia.
 | `save_diet` / `delete_diet` | food_diary | Diete da PDF |
 | `update_bill` | bollette | Consumi/costi utenze da PDF |
 | `search_web` | web_search | Ricerca web |
-| `create_briefing` / `list_briefings` / `update_briefing` / `delete_briefing` | news | Briefing notizie ricorrente (temi + cron) |
+| `create_briefing` / `list_briefings` / `update_briefing` / `delete_briefing` | news | Briefing notizie ricorrente (temi + cron, whitelist per-tema) |
+| `block_news_source` / `unblock_news_source` / `list_news_sources` | news | Blacklist globale fonti notizie |
 | `send_message_to_user` | multi_user | Messaggio proattivo a un membro |
 
 ---

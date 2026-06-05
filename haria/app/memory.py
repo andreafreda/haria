@@ -138,6 +138,12 @@ async def init_db():
                 active INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS news_blocklist (
+                user_id TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, domain)
+            );
         """)
         # migrazioni leggere: aggiungi colonne se mancano
         for table, col, ddl in [
@@ -556,6 +562,42 @@ async def update_briefing(briefing_id: int, user_id: str | None = None,
             (int(briefing_id),),
         )).fetchone()
     return _briefing_row(row) if row else None
+
+
+async def add_news_block(user_id: str, domain: str) -> bool:
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return False
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO news_blocklist (user_id, domain) VALUES (?, ?)",
+            (user_id, domain),
+        )
+        await db.commit()
+    return True
+
+
+async def remove_news_block(user_id: str, domain: str) -> bool:
+    domain = (domain or "").strip().lower()
+    if not domain:
+        return False
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM news_blocklist WHERE user_id = ? AND domain = ?",
+            (user_id, domain),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def get_news_blocks(user_id: str) -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT domain FROM news_blocklist WHERE user_id = ? ORDER BY domain",
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+    return [r[0] for r in rows]
 
 
 # ---- food_diary: profili ----
