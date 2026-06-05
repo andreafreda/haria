@@ -18,8 +18,11 @@ from memory import (
     get_weight_history, export_meals, get_profile,
     get_pantry, get_pantry_expiring, get_logged_days,
     toggle_shopping_item, upsert_profile,
+    get_user_briefings, add_briefing, update_briefing, deactivate_briefing,
 )
 from modules.food_diary import compute_macro_targets
+from modules import news
+import scheduler
 import config as cfg
 from claude_engine import chat
 
@@ -80,7 +83,7 @@ def _page(title: str, body: str) -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA — Diario Alimentare</header>
-<nav><a href="./">Piano</a><a href="./month">Mese</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./chat">Chat</a><a href="./export.csv">Export CSV</a></nav>
+<nav><a href="./">Piano</a><a href="./month">Mese</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./briefings">Notizie</a><a href="./chat">Chat</a><a href="./export.csv">Export CSV</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=page, content_type="text/html")
 
@@ -401,6 +404,144 @@ async def _h_pantry(request):
     return _page("Dispensa", body)
 
 
+def _briefing_user_id() -> str | None:
+    """chat_id (string) del primo utente: stesso user_id usato da Telegram per i briefing."""
+    u = _chat_user()
+    if not u or not u.get("chat_id"):
+        return None
+    return str(u["chat_id"])
+
+
+def _topics_to_text(topics_json: str) -> str:
+    """Serializza i topics in righe editabili: 'tema | sito1, sito2'."""
+    lines = []
+    for it in news._parse_topics(topics_json):
+        line = it["topic"]
+        if it.get("sources"):
+            line += " | " + ", ".join(it["sources"])
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _parse_topics_input(text: str) -> list[dict]:
+    """Inverso di _topics_to_text: una riga per tema, '|' separa la whitelist siti."""
+    items = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if "|" in line:
+            t, s = line.split("|", 1)
+            sources = [x.strip().lower() for x in s.split(",") if x.strip()]
+        else:
+            t, sources = line, []
+        t = t.strip()
+        if t:
+            items.append({"topic": t, "sources": sources})
+    return items
+
+
+def _briefing_form(b: dict | None) -> str:
+    """Form add (b=None) o edit (b=briefing dict con topics già parsati in JSON)."""
+    bid = b["id"] if b else ""
+    cron = _e(b["cron"]) if b else ""
+    topics_txt = _e(_topics_to_text(b["topics"])) if b else ""
+    title = f"Briefing #{b['id']}" if b else "Nuovo briefing"
+    del_btn = (f"<button type='button' class='btn brief-del' data-id='{b['id']}' "
+               f"style='background:#c0392b;margin-left:8px'>Elimina</button>") if b else ""
+    return (f"<form class='card brief-edit' data-id=\"{bid}\"><b>{title}</b><br>"
+            "<div class='efield' style='display:block'><label>Temi (uno per riga; "
+            "opzionale «| sito1, sito2» per limitare le fonti)</label>"
+            f"<textarea name='topics' rows='4' style='width:100%;max-width:520px;"
+            f"padding:6px;border:1px solid #ccc;border-radius:6px;font-size:14px'>{topics_txt}</textarea></div>"
+            "<div class='efield'><label>Cron (min ora gg mese gg-sett)</label>"
+            f"<input type='text' name='cron' value='{cron}' placeholder='0 8 * * *' style='width:160px'></div>"
+            "<br><button class='btn' type='submit'>Salva</button>"
+            f"{del_btn}<span class='muted savemsg' style='margin-left:10px'></span></form>")
+
+
+async def _h_briefings(request):
+    uid = _briefing_user_id()
+    body = "<h2>Briefing notizie programmati</h2>"
+    if not uid:
+        body += "<div class='card muted'>Nessun utente configurato.</div>"
+        return _page("Notizie", body)
+    items = await get_user_briefings(uid)
+    body += ("<div class='card muted'>Ogni briefing cerca i temi sul web e ti manda un riassunto "
+             "via Telegram agli orari del cron. Es. cron <code>0 8 * * *</code> = ogni giorno alle 8:00.</div>")
+    if not items:
+        body += "<div class='card muted'>Nessun briefing configurato.</div>"
+    for b in items:
+        body += _briefing_form(b)
+    body += "<h2>Aggiungi</h2>" + _briefing_form(None)
+    body += """<script>
+async function briefSave(f){
+  const msg=f.querySelector('.savemsg'),btn=f.querySelector('button[type=submit]');
+  const d={topics:f.querySelector('[name=topics]').value,cron:f.querySelector('[name=cron]').value};
+  if(f.dataset.id)d.id=parseInt(f.dataset.id);
+  btn.disabled=true;msg.textContent='…';
+  try{const r=await fetch('./api/briefings/save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(d)});const j=await r.json();
+    if(j.ok){location.reload();}else{msg.textContent=j.error||'errore';btn.disabled=false;}}
+  catch(e){msg.textContent='errore di rete';btn.disabled=false;}
+}
+document.querySelectorAll('.brief-edit').forEach(f=>f.addEventListener('submit',e=>{e.preventDefault();briefSave(f);}));
+document.querySelectorAll('.brief-del').forEach(b=>b.addEventListener('click',async e=>{
+  if(!confirm('Eliminare il briefing?'))return;b.disabled=true;
+  try{await fetch('./api/briefings/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:parseInt(b.dataset.id)})});location.reload();}
+  catch(e){b.disabled=false;}
+}));
+</script>"""
+    return _page("Notizie", body)
+
+
+async def _h_briefings_save(request):
+    uid = _briefing_user_id()
+    if not uid:
+        return web.json_response({"error": "Nessun utente configurato"}, status=503)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON non valido"}, status=400)
+    cron = (data.get("cron") or "").strip()
+    topics = _parse_topics_input(data.get("topics") or "")
+    if not topics:
+        return web.json_response({"error": "Indica almeno un tema"}, status=400)
+    if not cron:
+        return web.json_response({"error": "Indica il cron"}, status=400)
+    topics_json = news._dump_topics(topics)
+    bid = data.get("id")
+    if bid:
+        b = await update_briefing(int(bid), uid, topics_json, cron)
+        if not b:
+            return web.json_response({"error": "Briefing non trovato"}, status=404)
+        scheduler.cancel_briefing(b["id"])
+        if not scheduler.schedule_briefing(b):
+            return web.json_response({"error": "Cron non valido"}, status=400)
+        return web.json_response({"ok": True, "id": b["id"]})
+    b = await add_briefing(uid, topics_json, cron)
+    if not scheduler.schedule_briefing(b):
+        await deactivate_briefing(b["id"], uid)
+        return web.json_response({"error": "Cron non valido"}, status=400)
+    return web.json_response({"ok": True, "id": b["id"]})
+
+
+async def _h_briefings_delete(request):
+    uid = _briefing_user_id()
+    if not uid:
+        return web.json_response({"error": "Nessun utente configurato"}, status=503)
+    try:
+        data = await request.json()
+        bid = int(data.get("id"))
+    except Exception:
+        return web.json_response({"error": "Richiesta non valida"}, status=400)
+    ok = await deactivate_briefing(bid, uid)
+    if ok:
+        scheduler.cancel_briefing(bid)
+    return web.json_response({"ok": ok})
+
+
 async def _h_chat(request):
     body = """<h2>Chat con HARIA</h2>
 <div class='card'>
@@ -475,6 +616,9 @@ def build_web_app() -> web.Application:
     app.router.add_post("/api/shopping/toggle", _h_shopping_toggle)
     app.router.add_post("/api/profile/save", _h_profile_save)
     app.router.add_get("/pantry", _h_pantry)
+    app.router.add_get("/briefings", _h_briefings)
+    app.router.add_post("/api/briefings/save", _h_briefings_save)
+    app.router.add_post("/api/briefings/delete", _h_briefings_delete)
     app.router.add_get("/chat", _h_chat)
     app.router.add_post("/api/chat", _h_chat_api)
     app.router.add_get("/export.csv", _h_export)
