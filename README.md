@@ -313,7 +313,6 @@ La versione è in `haria/config.yaml` (`version:`), va bumpata a ogni release.
 **Sicurezza / robustezza**
 - Allowlist `control_device` (oggi Claude può chiamare qualsiasi servizio HA).
 - Test automatici (oggi solo `py_compile`).
-- TTL su `food_cache`.
 
 **Food**
 - Vitamine/minerali nel diario (micronutrienti base — fibre, zuccheri, saturi, sodio — già tracciati).

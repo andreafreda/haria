@@ -1005,10 +1005,15 @@ async def clear_pantry() -> int:
 
 # ---- food_diary: cache valori nutrizionali ----
 
+FOOD_CACHE_TTL_DAYS = 90
+
+
 async def get_food_cache(key: str) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT data, source FROM food_cache WHERE key = ?", (key.lower(),)
+            "SELECT data, source FROM food_cache WHERE key = ? "
+            "AND updated_at > datetime('now', ?)",
+            (key.lower(), f"-{FOOD_CACHE_TTL_DAYS} days"),
         )
         row = await cursor.fetchone()
     if not row:
@@ -1028,6 +1033,10 @@ async def set_food_cache(key: str, data: dict, source: str):
                ON CONFLICT(key) DO UPDATE SET data=excluded.data,
                  source=excluded.source, updated_at=CURRENT_TIMESTAMP""",
             (key.lower(), _json.dumps(data, ensure_ascii=False), source),
+        )
+        await db.execute(
+            "DELETE FROM food_cache WHERE updated_at <= datetime('now', ?)",
+            (f"-{FOOD_CACHE_TTL_DAYS} days",),
         )
         await db.commit()
 
