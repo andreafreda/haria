@@ -91,8 +91,6 @@ async def generate(topics: str, user_id: str = "", num_news: int = _RESULTS_PER_
             meta = " | ".join(x for x in (date, source) if x)
             lines.append(f"- {title}\n  data: {meta}\n  {snippet} ({url})")
         blocks_out.append("\n".join(lines))
-    if not blocks_out:
-        return "Nessuna notizia trovata per i temi configurati."
 
     # Tutti i temi a vuoto: messaggio amichevole, niente LLM.
     if len(empty_topics) == len(items):

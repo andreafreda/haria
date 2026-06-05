@@ -389,6 +389,11 @@ async def save_note(user_id: str, key: str, value: str):
             (user_id, key, value),
         )
         if _FTS_OK:
+            # rimuovi vecchie righe FTS della stessa nota (key) per evitare duplicati su update
+            await db.execute(
+                "DELETE FROM memory_fts WHERE user_id = ? AND kind = 'note' AND content LIKE ?",
+                (user_id, f"{key}: %"),
+            )
             await db.execute(
                 "INSERT INTO memory_fts (user_id, kind, content) VALUES (?, 'note', ?)",
                 (user_id, f"{key}: {value}"),

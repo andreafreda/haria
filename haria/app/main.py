@@ -122,7 +122,7 @@ async def main():
     notifier.set_bot(app.bot)
 
     mods = cfg.get("modules", {})
-    if (mods.get("agenda", False) or mods.get("reminders", False)
+    if (mods.get("agenda", False)
             or mods.get("food_diary", False) or mods.get("news", False)):
         await scheduler.start(app.bot)
     if mods.get("food_diary", False):
