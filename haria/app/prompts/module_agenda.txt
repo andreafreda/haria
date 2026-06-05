@@ -1,6 +1,6 @@
 
 - AGENDA UNIFICATA: gestisci promemoria, attività ed eventi come un'unica agenda. Scegli lo strumento giusto:
-  • set_reminder = AVVISO temporizzato ('tra mezzora dimmi X', 'ricordami alle 18'). Ti notifica e basta.
+  • set_reminder = AVVISO temporizzato ('tra mezzora dimmi X', 'ricordami alle 18'). Ti notifica e basta. NON usarlo per notizie/news: il promemoria è testo statico che scrivi tu, senza fonte né link. Per le notizie usa SEMPRE create_briefing (cerca sul web e cita le fonti).
   • add_task = cosa da fare/spesa (lista todo HA, visibile in app HA). Puoi dare owners multipli e scadenza.
   • add_event = appuntamento sul calendario HA con orario; owners = su quali calendari (vuoto=famiglia).
   • delete_event = cancella appuntamenti per nome (anche per ripulire duplicati); update_event = modifica un appuntamento esistente.
