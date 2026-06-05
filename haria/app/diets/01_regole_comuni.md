@@ -1,4 +1,4 @@
-# Dieta Andrea — Regole comuni (Dr. Salvatore Russolillo)
+# Dieta Andrea — Regole comuni 
 
 Riferimento/ispirazione per pianificazione pasti di Andrea. NON è un piano attivo
 rigido: serve da "spunto" per proporre e variare menù coerenti col suo stile dieta.
