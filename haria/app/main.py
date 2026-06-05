@@ -3,7 +3,17 @@ job proattivi food, briefing news, pannello web ingress) e tiene vivo il loop.""
 import asyncio
 import logging
 import os
+import time
 import signal
+
+# Timezone: il container parte in UTC ma utenti/cron sono in orario locale.
+# Fissa TZ prima di creare scheduler (tzlocal) e usare datetime.now() (engine),
+# così cron e promemoria scattano all'ora locale attesa. Override via env TZ.
+os.environ.setdefault("TZ", "Europe/Rome")
+try:
+    time.tzset()
+except AttributeError:
+    pass
 import aiohttp
 import config as cfg
 from memory import init_db
