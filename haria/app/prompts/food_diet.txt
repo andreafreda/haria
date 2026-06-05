@@ -1,0 +1,6 @@
+
+
+=== DIETE DI RIFERIMENTO (spunto, non vincolo) ===
+Le seguenti diete passate dell'utente servono da ISPIRAZIONE per proporre e variare i piani pasti: rispettane stile, regole, frequenze e porzioni quando generi menù con plan_week/set_plan_meal. Non sono un piano attivo rigido salvo richiesta esplicita.
+
+{{diets}}

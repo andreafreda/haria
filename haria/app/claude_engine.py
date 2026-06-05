@@ -1,3 +1,11 @@
+"""Motore conversazionale di HARIA.
+
+Costruisce il system prompt (identità + entità HA + memoria utente + data/ora),
+espone i tool core (stato casa, controllo dispositivi, memoria, Alexa, recall,
+respond) più quelli dei moduli abilitati, e gira il loop agentico con Claude
+Haiku: il modello chiama i tool finché non produce una risposta via 'respond'.
+Gestisce anche il riassunto automatico della history quando supera la finestra.
+"""
 import json
 import logging
 from datetime import datetime
@@ -12,6 +20,7 @@ from memory import (
     MAX_HISTORY, SUMMARY_BATCH,
 )
 import modules
+import prompts
 import config as cfg
 
 logger = logging.getLogger(__name__)
@@ -196,20 +205,7 @@ async def _run_tool(name: str, inputs: dict, user_id: str) -> str:
 async def _build_system(user_id: str, user_config: dict) -> list[dict]:
     name = user_config.get("name", "Utente")
     context = user_config.get("context", "")
-    base = (
-        f"Sei HARIA, assistente AI personale di {name}. "
-        "Sei integrata in Home Assistant e controlli la casa tramite i tool disponibili.\n\n"
-        "REGOLE OBBLIGATORIE:\n"
-        "- Devi SEMPRE usare il tool 'respond' per rispondere all'utente. Non puoi rispondere con testo libero.\n"
-        "- Hai già la lista completa delle entità qui sotto: usa direttamente l'entity_id giusto, NON chiamare get_house_state per scoprirlo.\n"
-        "- Se l'utente chiede di controllare qualcosa, chiama control_device col giusto entity_id, POI respond.\n"
-        "- Usa get_house_state SOLO se serve lo stato live di un'entità specifica (es. 'la luce è accesa?').\n"
-        "- NON chiedere MAI all'utente l'entity_id.\n"
-        "- Per luci usa domain='light', service='turn_on' o 'turn_off', data={'entity_id': '...'}.\n"
-        "- Per switch usa domain='switch'.\n"
-        "- Per far PARLARE ad alta voce un Echo/Alexa usa speak_alexa con l'entity_id del media_player (es. media_player.echo_show_cucina). NON usare control_device per gli annunci vocali.\n"
-        "- Rispondi in italiano, in modo conciso."
-    )
+    base = prompts.get("system_base", name=name)
     base += modules.prompt()
 
     cached = await get_entity_cache()
@@ -244,12 +240,12 @@ async def _build_system(user_id: str, user_config: dict) -> list[dict]:
     week_map_next = "; ".join(
         f"{_gg[i]}={(next_monday + timedelta(days=i)).isoformat()}" for i in range(7)
     )
-    dt_block = (
-        f"Data/ora attuale: {now.isoformat(timespec='seconds')} ({_gg[now.weekday()]}).\n"
-        f"Date ISO settimana CORRENTE (lun-dom): {week_map}.\n"
-        f"Date ISO settimana PROSSIMA: {week_map_next}.\n"
-        "Quando salvi/leggi un pasto usa ESATTAMENTE l'ISO di queste mappe per il giorno citato. "
-        "Non calcolare la data a mano."
+    dt_block = prompts.get(
+        "datetime_block",
+        now=now.isoformat(timespec="seconds"),
+        weekday=_gg[now.weekday()],
+        week_map=week_map,
+        week_map_next=week_map_next,
     )
     return [
         {"type": "text", "text": base, "cache_control": {"type": "ephemeral"}},
@@ -268,15 +264,9 @@ async def _maybe_summarize(user_id: str):
             return
         prev = await get_summary(user_id)
         convo = "\n".join(f"{t['role']}: {t['content']}" for t in old)
-        sys = (
-            "Aggiorna il riassunto della memoria di una conversazione assistente-utente. "
-            "Conserva fatti durevoli: preferenze, nomi, decisioni, dati personali, impegni. "
-            "Scarta chiacchiere effimere. Italiano, conciso, massimo ~200 parole."
-        )
-        user_msg = (
-            (f"Riassunto esistente:\n{prev}\n\n" if prev else "")
-            + f"Nuovi scambi da integrare:\n{convo}\n\nRiassunto aggiornato:"
-        )
+        sys = prompts.get("summarize_system")
+        prev_block = f"Riassunto esistente:\n{prev}\n\n" if prev else ""
+        user_msg = prompts.get("summarize_user", prev_block=prev_block, convo=convo)
         resp = await client.messages.create(
             model=MODEL, max_tokens=400,
             system=sys,
@@ -303,19 +293,14 @@ async def chat(user_id: str, user_text: str, user_config: dict,
         content = [
             {"type": "document", "source": {
                 "type": "base64", "media_type": doc_media_type, "data": doc_b64}},
-            {"type": "text", "text": user_text or (
-                "PDF allegato. Classifica il tipo e agisci di conseguenza:\n"
-                "- bolletta (corrente/luce, acqua, gas): estrai utility, periodo, consumo, costo e chiama update_bill.\n"
-                "- dieta/piano alimentare: estrai il contenuto rilevante e salvalo con save_diet.\n"
-                "Se il tipo non è chiaro, chiedi all'utente prima di salvare."
-            )},
+            {"type": "text", "text": user_text or prompts.get("doc_classify")},
         ]
         messages = history + [{"role": "user", "content": content}]
     elif image_b64:
         content = [
             {"type": "image", "source": {
                 "type": "base64", "media_type": image_media_type, "data": image_b64}},
-            {"type": "text", "text": user_text or "Analizza la foto del pasto e registralo con log_meal, stimando alimenti e valori nutrizionali."},
+            {"type": "text", "text": user_text or prompts.get("image_meal")},
         ]
         messages = history + [{"role": "user", "content": content}]
     else:

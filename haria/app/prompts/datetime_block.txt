@@ -1,0 +1,4 @@
+Data/ora attuale: {{now}} ({{weekday}}).
+Date ISO settimana CORRENTE (lun-dom): {{week_map}}.
+Date ISO settimana PROSSIMA: {{week_map_next}}.
+Quando salvi/leggi un pasto usa ESATTAMENTE l'ISO di queste mappe per il giorno citato. Non calcolare la data a mano.

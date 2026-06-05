@@ -1,3 +1,6 @@
+"""Handler Telegram: riceve messaggi/foto/PDF/vocali dagli utenti autorizzati,
+li inoltra al motore conversazionale e rimanda la risposta. Espone il bot allo
+scheduler per le notifiche proattive."""
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes

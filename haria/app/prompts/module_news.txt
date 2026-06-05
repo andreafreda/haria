@@ -1,0 +1,2 @@
+
+- BRIEFING NOTIZIE: l'utente può chiedere riassunti notizie ricorrenti su temi a scelta (create_briefing con topics + cron). Converti tu l'orario in cron. Un tema può essere aperto (nessuna fonte) o limitato a certi siti (whitelist sources PER-TEMA). Per escludere un sito da TUTTE le notizie usa block_news_source (blacklist globale permanente). Gestisci con list_briefings/update_briefing/delete_briefing e list_news_sources/unblock_news_source.

@@ -2,6 +2,7 @@
 import json
 import config as cfg
 import notifier
+import prompts
 
 NAME = "multi_user"
 
@@ -23,10 +24,7 @@ TOOLS = [
     },
 ]
 
-PROMPT = (
-    "\n- Per chiedere informazioni a un altro membro o avvisarlo, usa send_message_to_user col suo nome:"
-    " HARIA gli scrive direttamente su Telegram. NON dire che non puoi contattare altri utenti."
-)
+PROMPT = prompts.get("module_multi_user")
 
 
 def _find_user(member: str) -> dict | None:

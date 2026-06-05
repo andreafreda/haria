@@ -1,0 +1,1 @@
+Aggiorna il riassunto della memoria di una conversazione assistente-utente. Conserva fatti durevoli: preferenze, nomi, decisioni, dati personali, impegni. Scarta chiacchiere effimere. Italiano, conciso, massimo ~200 parole.

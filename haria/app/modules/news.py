@@ -14,6 +14,7 @@ import json
 import logging
 import web_search
 import scheduler
+import prompts
 from memory import (
     add_briefing, get_user_briefings, get_briefing,
     deactivate_briefing, update_briefing,
@@ -81,13 +82,7 @@ async def generate(topics: str, user_id: str = "") -> str:
 
     raw = "\n\n".join(blocks_out)
     from claude_engine import client, MODEL
-    prompt = (
-        "Sei un assistente che prepara un briefing mattutino di notizie. "
-        "Dai risultati di ricerca qui sotto, scrivi un riassunto BREVE e chiaro in italiano, "
-        "raggruppato per tema. Per ogni tema 2-4 punti sintetici sulle notizie principali. "
-        "Includi il link della fonte tra parentesi per ogni notizia. Niente preamboli, vai dritto al briefing.\n\n"
-        f"RISULTATI:\n{raw}"
-    )
+    prompt = prompts.get("news_briefing", raw=raw)
     resp = await client.messages.create(
         model=MODEL, max_tokens=900,
         messages=[{"role": "user", "content": prompt}],
@@ -196,13 +191,7 @@ TOOLS = [
     },
 ]
 
-PROMPT = (
-    "\n- BRIEFING NOTIZIE: l'utente può chiedere riassunti notizie ricorrenti su temi a scelta "
-    "(create_briefing con topics + cron). Converti tu l'orario in cron. Un tema può essere aperto "
-    "(nessuna fonte) o limitato a certi siti (whitelist sources PER-TEMA). Per escludere un sito da "
-    "TUTTE le notizie usa block_news_source (blacklist globale permanente). "
-    "Gestisci con list_briefings/update_briefing/delete_briefing e list_news_sources/unblock_news_source."
-)
+PROMPT = prompts.get("module_news")
 
 
 def _dump_topics(topics) -> str:

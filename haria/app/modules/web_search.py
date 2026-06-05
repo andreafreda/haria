@@ -1,6 +1,7 @@
 """Modulo web_search: ricerca web via DuckDuckGo (ddgs)."""
 import json
 import web_search
+import prompts
 
 NAME = "web_search"
 
@@ -19,9 +20,7 @@ TOOLS = [
     },
 ]
 
-PROMPT = (
-    "\n- Per informazioni aggiornate o che non conosci (notizie, eventi recenti, dati attuali) usa search_web, poi rispondi citando le fonti."
-)
+PROMPT = prompts.get("module_web_search")
 
 
 async def handle(name: str, inputs: dict, user_id: str) -> str:

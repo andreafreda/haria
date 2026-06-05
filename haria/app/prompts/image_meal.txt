@@ -1,0 +1,1 @@
+Analizza la foto del pasto e registralo con log_meal, stimando alimenti e valori nutrizionali.

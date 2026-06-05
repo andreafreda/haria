@@ -1,3 +1,5 @@
+"""Client Home Assistant: chiamate REST e WebSocket alla Supervisor/Core API
+(stati entità, call_service, eventi calendario) usate dal motore e dai moduli."""
 import aiohttp
 import logging
 import config as cfg

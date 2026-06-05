@@ -21,6 +21,7 @@ from memory import (
 )
 import nutrition
 from ha_client import get_states, call_service
+import prompts
 
 NAME = "food_diary"
 
@@ -150,13 +151,7 @@ def diet_prompt() -> str:
     diets = load_diets()
     if not diets:
         return ""
-    return (
-        "\n\n=== DIETE DI RIFERIMENTO (spunto, non vincolo) ===\n"
-        "Le seguenti diete passate dell'utente servono da ISPIRAZIONE per proporre "
-        "e variare i piani pasti: rispettane stile, regole, frequenze e porzioni "
-        "quando generi menù con plan_week/set_plan_meal. Non sono un piano attivo "
-        "rigido salvo richiesta esplicita.\n\n" + diets
-    )
+    return prompts.get("food_diet", diets=diets)
 
 
 # Esposto al registry: contenuto diete iniettato a ogni messaggio (così le
@@ -782,30 +777,7 @@ TOOLS = [
     },
 ]
 
-PROMPT = (
-    "\n- DIARIO ALIMENTARE: per registrare pasti usa log_meal e STIMA tu grammi/kcal/macro di ogni alimento (porzioni realistiche). Quando possibile stima anche i micronutrienti (fibre, zuccheri, grassi saturi, sodio) e i principali micronutrienti vitaminici/minerali (vit C, vit D, ferro, calcio, potassio, magnesio)."
-    " Per peso usa log_weight, per i profili set_diet_profile/get_diet_profile."
-    " Se l'utente non indica il membro, usa il nome dell'utente corrente come 'member'."
-    " Un utente può registrare per un altro membro: in tal caso usa il nome del membro indicato."
-    "\n- ALLERGIE: se log_meal o set_plan_meal ritornano 'allergeni_rilevati'/'avviso', AVVISA SUBITO l'utente in modo chiaro ed esplicito (es. '⚠️ Attenzione: contiene X, allergene di Y') prima di ogni altra cosa."
-    " Per query storiche usa get_meals/get_weight_history."
-    "\n- PIANO SETTIMANALE: per 'cosa si mangia oggi/questa settimana' usa get_meal_plan (calcola le date ISO dalla data attuale)."
-    " La SETTIMANA inizia di LUNEDÌ e finisce di DOMENICA (lun-dom). 'Questa settimana' = dal lunedì corrente alla domenica successiva."
-    " Se non esiste un piano, proponi di crearlo con plan_week: genera tu un menù vario tenendo conto di profili/dieta/allergie/preferenze della famiglia, e STIMA le kcal di ogni pasto pianificato."
-    " Se l'utente vuole cambiare un pasto, PROPONI 2-3 alternative coerenti; quando sceglie, salva con set_plan_meal."
-    " Il piano è COMUNE di default (set_plan_meal/plan_week senza 'member'). Se una persona mangia qualcosa di diverso, salva un OVERRIDE PERSONALE valorizzando 'member' (solo per quel pasto). get_meal_plan ritorna il campo 'member' (vuoto = comune)."
-    "\n- VALORI NUTRIZIONALI: prima di stimare kcal/macro a memoria, prova lookup_nutrition per dati reali (cache locale)."
-    " Per prodotti confezionati col codice a barre usa lookup_barcode. Se la fonte non risponde, stima tu."
-    "\n- RIEPILOGO: per 'quanto ho mangiato/quante calorie restano' usa get_daily_summary: riporta sia kcal sia MACRO (proteine/carbo/grassi) consumati vs target e rimanenti."
-    "\n- MACRO: ogni profilo ha target macro (macro_targets in get_diet_profile/get_daily_summary). Quando pianifichi/proponi pasti tieni conto del bilancio proteine/carbo/grassi, non solo delle kcal."
-    "\n- SPESA: per generare la lista della spesa, leggi il piano (get_meal_plan), GENERA tu gli ingredienti aggregati e salvali con add_shopping_items."
-    " Per consultarla usa get_shopping_list, per spuntare check_shopping_item, per svuotare clear_shopping_list."
-    " COSTI: puoi indicare 'price' (€) nelle voci di add_shopping_items, o impostarlo dopo con set_shopping_price; get_shopping_cost dà il totale stimato."
-    "\n- DISPENSA/SCORTE (anti-spreco): usa add_pantry_items per registrare cosa c'è in casa (con scadenza se nota), get_pantry per consultarla (expiring=true per voci in scadenza), consume_pantry_item quando un prodotto finisce."
-    " Quando pianifichi i pasti o generi la spesa, TIENI CONTO di cosa è già in dispensa (evita di ricomprare) e privilegia gli ingredienti in scadenza."
-    "\n- CONSIGLI: quando proponi cosa cucinare, tieni conto di profili/obiettivi/allergie e privilegia ricette semplici e veloci; offri sempre alternative."
-    "\n- DIETE PDF: se l'utente manda un PDF di una dieta, ESTRAI il contenuto rilevante (profilo, regole, frequenze, menù, porzioni, sostituzioni) in forma sintetica e SALVALO con save_diet (name breve descrittivo, content in markdown). Conferma e, se richiesto, riadatta il piano (plan_week) sulla nuova dieta."
-)
+PROMPT = prompts.get("module_food_diary")
 
 
 async def _recompute_profile_derived(member: str) -> dict | None:

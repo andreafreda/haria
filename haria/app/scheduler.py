@@ -1,3 +1,6 @@
+"""Scheduler HARIA (APScheduler asyncio): promemoria one-shot/ricorrenti,
+briefing news cron, e job proattivi food_diary (piano del giorno, scadenze
+dispensa, report settimanale) + refresh sensori MQTT."""
 import logging
 from datetime import datetime, date, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler

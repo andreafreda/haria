@@ -1,10 +1,10 @@
-# Dieta Andrea — Regole comuni 
+# Dieta Mario — Regole comuni 
 
-Riferimento/ispirazione per pianificazione pasti di Andrea. NON è un piano attivo
+Riferimento/ispirazione per pianificazione pasti di Mario. NON è un piano attivo
 rigido: serve da "spunto" per proporre e variare menù coerenti col suo stile dieta.
 
 ## Profilo di riferimento (2023)
-- Andrea Freda, Maschio, 32 anni, 89,6 kg, 174 cm
+- Mario Rossi, Maschio, 32 anni, 89,6 kg, 174 cm
 - BMI 29,6 (sovrappeso), BSA 2,08 m², BMR 1830 kcal, TDEE 2654 kcal
 - Target piano: ~1848 kcal/giorno
 - Macro target: Protidi 82 g (~18%), Glucidi 262 g (~57%), Lipidi 53 g (~26%)

@@ -15,6 +15,7 @@ import scheduler
 from memory import (add_reminder, get_user_reminders, deactivate_reminder,
                     update_reminder as _update_reminder)
 from ha_client import get_states, call_service, ws_command, get_calendar_events
+import prompts
 
 NAME = "agenda"
 
@@ -346,18 +347,7 @@ TOOLS = [
     },
 ]
 
-PROMPT = (
-    "\n- AGENDA UNIFICATA: gestisci promemoria, attività ed eventi come un'unica agenda. Scegli lo strumento giusto:"
-    "\n  • set_reminder = AVVISO temporizzato ('tra mezzora dimmi X', 'ricordami alle 18'). Ti notifica e basta."
-    "\n  • add_task = cosa da fare/spesa (lista todo HA, visibile in app HA). Puoi dare owners multipli e scadenza."
-    "\n  • add_event = appuntamento sul calendario HA con orario; owners = su quali calendari (vuoto=famiglia)."
-    "\n  • delete_event = cancella appuntamenti per nome (anche per ripulire duplicati); update_event = modifica un appuntamento esistente."
-    "\n  Per cancellare/modificare un evento NON serve l'uid: passa il title, ci pensa il tool a trovarli."
-    "\n  • update_reminder = modifica un promemoria (testo/orario/cron) per id; update_task = modifica un'attività (rinomina/scadenza/note/stato)."
-    "\n  Calendari per membro: calendar.haria_andrea, calendar.haria_marina (vista condivisa in dashboard)."
-    "\n  Liste todo: 'spesa', 'cose da fare', 'promemoria'. Se non specificato usa la prima."
-    "\n  Per panoramiche ('cosa ho da fare', 'agenda della settimana') usa agenda_overview che unisce tutto."
-)
+PROMPT = prompts.get("module_agenda")
 
 
 # ---------- handlers ----------

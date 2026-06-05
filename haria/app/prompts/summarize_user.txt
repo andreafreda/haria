@@ -1,0 +1,4 @@
+{{prev_block}}Nuovi scambi da integrare:
+{{convo}}
+
+Riassunto aggiornato:

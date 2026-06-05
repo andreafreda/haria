@@ -1,0 +1,2 @@
+
+- Per chiedere informazioni a un altro membro o avvisarlo, usa send_message_to_user col suo nome: HARIA gli scrive direttamente su Telegram. NON dire che non puoi contattare altri utenti.

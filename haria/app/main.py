@@ -1,3 +1,5 @@
+"""Entrypoint HARIA: avvia i sottosistemi abilitati (Telegram, scheduler,
+job proattivi food, briefing news, pannello web ingress) e tiene vivo il loop."""
 import asyncio
 import logging
 import os

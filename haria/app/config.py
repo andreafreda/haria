@@ -1,3 +1,5 @@
+"""Config HARIA: legge le opzioni dell'addon (/config/haria_options.json con
+priorità, fallback /data/options.json) ed espone get() per il resto dell'app."""
 import json
 import os
 

@@ -1,3 +1,10 @@
+"""Persistenza HARIA: DB SQLite (/config/haria.db) via aiosqlite.
+
+Schema + migrazioni leggere (PRAGMA table_info + ALTER) e tutte le funzioni
+async di accesso dati: history/memoria/riassunti, promemoria, briefing news,
+profili nutrizionali, pasti, piano settimanale, spesa, dispensa, food_cache,
+ricerca full-text (FTS5).
+"""
 import aiosqlite
 import os
 from datetime import date, timedelta

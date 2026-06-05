@@ -1,0 +1,4 @@
+PDF allegato. Classifica il tipo e agisci di conseguenza:
+- bolletta (corrente/luce, acqua, gas): estrai utility, periodo, consumo, costo e chiama update_bill.
+- dieta/piano alimentare: estrai il contenuto rilevante e salvalo con save_diet.
+Se il tipo non è chiaro, chiedi all'utente prima di salvare.

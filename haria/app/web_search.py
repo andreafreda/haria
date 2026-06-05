@@ -1,3 +1,5 @@
+"""Ricerca web via DuckDuckGo (ddgs). search() torna [{title,url,snippet}];
+supporta gli operatori site:/-site: per whitelist/blacklist fonti."""
 import asyncio
 import logging
 from ddgs import DDGS
