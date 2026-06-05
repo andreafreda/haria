@@ -18,7 +18,7 @@ from memory import (
     get_weight_history, export_meals, get_profile,
     get_pantry, get_pantry_expiring, get_logged_days,
     toggle_shopping_item, upsert_profile,
-    get_user_briefings, get_active_briefings, add_briefing, update_briefing, deactivate_briefing,
+    get_active_briefings, add_briefing, update_briefing, deactivate_briefing,
     get_error_logs, clear_error_logs,
 )
 from modules.food_diary import compute_macro_targets
@@ -451,14 +451,6 @@ async def _h_pantry(request):
     return _page("Dispensa", body)
 
 
-def _briefing_user_id() -> str | None:
-    """chat_id (string) del primo utente: stesso user_id usato da Telegram per i briefing."""
-    u = _chat_user()
-    if not u or not u.get("chat_id"):
-        return None
-    return str(u["chat_id"])
-
-
 def _briefing_users() -> list[dict]:
     """Utenti con chat_id: candidati destinatari briefing."""
     out = []
@@ -467,13 +459,6 @@ def _briefing_users() -> list[dict]:
         if cid:
             out.append({"chat_id": str(cid), "name": u.get("name") or str(cid)})
     return out
-
-
-def _user_name(uid: str) -> str:
-    for u in _briefing_users():
-        if u["chat_id"] == str(uid):
-            return u["name"]
-    return str(uid)
 
 
 def _topics_to_text(topics_json: str) -> str:
