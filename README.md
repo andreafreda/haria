@@ -84,8 +84,9 @@ per nome del tool. Aggiungere una feature = nuovo file modulo + voce in `ALL` + 
   Comandi: `/start` (mostra chat_id se non autorizzato), `/reset` (cancella memoria conversazione),
   `/updateentities` (ricarica cache entità HA), `/reloadconfig` (rilegge config da file).
   Whitelist su `chat_id`: chi non è in `users[]` riceve rifiuto.
-- **Pannello web** (`webpanel.py`, ingress porta 8099) — dashboard food sola-lettura
+- **Pannello web** (`webpanel.py`, ingress porta 8099) — dashboard food interattiva
   (Piano/Mese/Diario/Profili/Spesa/Dispensa/Export CSV) + pagina **Chat** con HARIA.
+  Check-off spesa (toggle), edit profili inline (ricalcolo BMI), grafico kcal/giorno.
   Output HTML escaped (`_e()`, anti-XSS).
 
 ### Handover bot Telegram (automatico)
@@ -315,9 +316,7 @@ La versione è in `haria/config.yaml` (`version:`), va bumpata a ogni release.
 - TTL su `food_cache`.
 
 **Food**
-- Micronutrienti (fibre, zuccheri, saturi, sodio, vitamine/minerali) — schema previsto, non popolato.
-- Controllo allergie hard (oggi solo via ragionamento prompt).
-- Pannello web interattivo (oggi sola-lettura): check-off spesa, edit profili, grafici.
+- Vitamine/minerali nel diario (micronutrienti base — fibre, zuccheri, saturi, sodio — già tracciati).
 
 **Piattaforma**
 - `ha_chat` → conversation agent nativo HA (Assist pipeline).

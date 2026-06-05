@@ -41,6 +41,69 @@ def _norm(member: str) -> str:
     return (member or "").strip().lower()
 
 
+# Gruppi allergeni (canonico -> sottostringhe da cercare nel testo del cibo).
+# Heuristico ma utile: copre i principali allergeni EU + sinonimi/derivati IT.
+_ALLERGEN_GROUPS = {
+    "glutine": ["glutine", "grano", "frumento", "pane", "pasta", "farina", "orzo",
+                "farro", "seitan", "cracker", "biscott", "pizza", "couscous", "bulgur"],
+    "lattosio": ["latte", "lattosio", "formagg", "yogurt", "burro", "panna",
+                 "mozzarella", "parmigian", "ricotta", "besciamella", "gelato", "stracchino"],
+    "uova": ["uovo", "uova", "frittata", "maionese", "omelette", "albume"],
+    "arachidi": ["arachid", "nocciolina", "peanut"],
+    "frutta a guscio": ["noci", "noce", "nocciol", "mandorl", "anacard", "pistacch",
+                        "pinoli", "castagn"],
+    "pesce": ["pesce", "tonno", "salmone", "merluzzo", "acciug", "sgombro",
+              "branzino", "orata", "nasello", "platessa"],
+    "crostacei": ["gamber", "scampi", "aragost", "granchio", "crostace", "mazzancoll"],
+    "molluschi": ["cozze", "vongole", "calamar", "polpo", "seppia", "ostrica", "mollusch"],
+    "soia": ["soia", "soya", "edamame", "tofu"],
+    "sesamo": ["sesamo", "tahin"],
+    "sedano": ["sedano"],
+    "senape": ["senape", "mostarda"],
+    "solfiti": ["solfiti", "solfito"],
+    "lupini": ["lupini", "lupino"],
+}
+
+
+def _check_allergens(allergies: str, items: list[dict], description: str) -> list[dict]:
+    """Confronta allergie del profilo col contenuto del pasto.
+    Ritorna [{allergene, in}] per ogni match. Vuoto se nessun allergene o nessun match."""
+    raw = (allergies or "").strip().lower()
+    if not raw:
+        return []
+    import re
+    terms = [t for t in re.split(r"[,;/]+|\be\b|\s{2,}", raw) if t.strip()]
+    food_parts = [(it.get("name") or "").lower() for it in (items or [])]
+    food_parts.append((description or "").lower())
+    food_text = " ".join(food_parts)
+    if not food_text.strip():
+        return []
+    hits: list[dict] = []
+    seen = set()
+    for term in terms:
+        term = term.strip()
+        words = [w for w in re.findall(r"\w+", term) if len(w) >= 3]
+        if not words:
+            continue
+        # trova gruppo allergene corrispondente al termine del profilo
+        group_subs = None
+        group_name = None
+        for canon, subs in _ALLERGEN_GROUPS.items():
+            if any(w in canon or any(w in s or s in w for s in subs) for w in words):
+                group_subs, group_name = subs, canon
+                break
+        search = group_subs if group_subs else words
+        label = group_name or term
+        for sub in search:
+            if sub in food_text and label not in seen:
+                # quale alimento/parte ha fatto match
+                where = next((fp for fp in food_parts if sub in fp), food_text)
+                hits.append({"allergene": label, "in": where.strip()})
+                seen.add(label)
+                break
+    return hits
+
+
 # Diete di riferimento ("spunto"): caricate da repo (app/diets) + cartella
 # persistente FTP-accessibile (/config/haria_diets). Estendibile senza codice:
 # basta aggiungere file .md/.txt in /config/haria_diets.
@@ -284,6 +347,10 @@ TOOLS = [
                             "protein_g": {"type": "number"},
                             "carbs_g": {"type": "number"},
                             "fat_g": {"type": "number"},
+                            "fiber_g": {"type": "number", "description": "Fibre (g)"},
+                            "sugar_g": {"type": "number", "description": "Zuccheri (g)"},
+                            "sat_fat_g": {"type": "number", "description": "Grassi saturi (g)"},
+                            "sodium_mg": {"type": "number", "description": "Sodio (mg)"},
                         },
                         "required": ["name", "grams", "kcal"],
                     },
@@ -292,6 +359,10 @@ TOOLS = [
                 "protein_g": {"type": "number"},
                 "carbs_g": {"type": "number"},
                 "fat_g": {"type": "number"},
+                "fiber_g": {"type": "number", "description": "Totale fibre (g)"},
+                "sugar_g": {"type": "number", "description": "Totale zuccheri (g)"},
+                "sat_fat_g": {"type": "number", "description": "Totale grassi saturi (g)"},
+                "sodium_mg": {"type": "number", "description": "Totale sodio (mg)"},
                 "eaten_at": {"type": "string", "description": "ISO datetime se pasto passato; altrimenti ometti (= ora)"},
             },
             "required": ["member", "meal_type", "description", "kcal_total"],
@@ -700,10 +771,11 @@ TOOLS = [
 ]
 
 PROMPT = (
-    "\n- DIARIO ALIMENTARE: per registrare pasti usa log_meal e STIMA tu grammi/kcal/macro di ogni alimento (porzioni realistiche)."
+    "\n- DIARIO ALIMENTARE: per registrare pasti usa log_meal e STIMA tu grammi/kcal/macro di ogni alimento (porzioni realistiche). Quando possibile stima anche i micronutrienti (fibre, zuccheri, grassi saturi, sodio)."
     " Per peso usa log_weight, per i profili set_diet_profile/get_diet_profile."
     " Se l'utente non indica il membro, usa il nome dell'utente corrente come 'member'."
-    " Un utente può registrare per un altro membro (es. la bimba): in tal caso usa il nome del membro indicato."
+    " Un utente può registrare per un altro membro: in tal caso usa il nome del membro indicato."
+    "\n- ALLERGIE: se log_meal o set_plan_meal ritornano 'allergeni_rilevati'/'avviso', AVVISA SUBITO l'utente in modo chiaro ed esplicito (es. '⚠️ Attenzione: contiene X, allergene di Y') prima di ogni altra cosa."
     " Per query storiche usa get_meals/get_weight_history."
     "\n- PIANO SETTIMANALE: per 'cosa si mangia oggi/questa settimana' usa get_meal_plan (calcola le date ISO dalla data attuale)."
     " La SETTIMANA inizia di LUNEDÌ e finisce di DOMENICA (lun-dom). 'Questa settimana' = dal lunedì corrente alla domenica successiva."
@@ -828,13 +900,26 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
             "protein_g": inputs.get("protein_g"),
             "carbs_g": inputs.get("carbs_g"),
             "fat_g": inputs.get("fat_g"),
+            "fiber_g": inputs.get("fiber_g"),
+            "sugar_g": inputs.get("sugar_g"),
+            "sat_fat_g": inputs.get("sat_fat_g"),
+            "sodium_mg": inputs.get("sodium_mg"),
         }
         meal = await add_meal(
             member, inputs["meal_type"], inputs["description"],
             totals, inputs.get("items", []),
             inputs.get("eaten_at"), user_id,
         )
-        return json.dumps({"ok": True, "meal": meal, "kcal": totals["kcal_total"]}, ensure_ascii=False)
+        out = {"ok": True, "meal": meal, "kcal": totals["kcal_total"]}
+        prof = await get_profile(member)
+        if prof:
+            alerts = _check_allergens(prof.get("allergies"), inputs.get("items", []),
+                                      inputs["description"])
+            if alerts:
+                out["allergeni_rilevati"] = alerts
+                out["avviso"] = ("ATTENZIONE: il pasto contiene allergeni del profilo di "
+                                 f"{member}. Avvisa SUBITO l'utente in modo esplicito.")
+        return json.dumps(out, ensure_ascii=False)
 
     if name == "get_meals":
         meals = await get_meals(member, inputs.get("date_from"), inputs.get("date_to"))
@@ -871,8 +956,18 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
             inputs.get("recipe"), inputs.get("servings"), inputs.get("kcal"),
             inputs.get("member"),
         )
-        return json.dumps({"ok": True, "date": inputs["date"], "meal_type": inputs["meal_type"],
-                           "member": inputs.get("member") or "comune"}, ensure_ascii=False)
+        out = {"ok": True, "date": inputs["date"], "meal_type": inputs["meal_type"],
+               "member": inputs.get("member") or "comune"}
+        plan_member = _norm(inputs.get("member"))
+        if plan_member:
+            prof = await get_profile(plan_member)
+            if prof:
+                alerts = _check_allergens(prof.get("allergies"), [], inputs["items"])
+                if alerts:
+                    out["allergeni_rilevati"] = alerts
+                    out["avviso"] = (f"ATTENZIONE: pasto pianificato contiene allergeni di "
+                                     f"{plan_member}. Avvisa l'utente e proponi alternativa.")
+        return json.dumps(out, ensure_ascii=False)
 
     if name == "delete_plan_meal":
         n = await delete_plan_meal(inputs["date"], inputs["meal_type"], inputs.get("member"))

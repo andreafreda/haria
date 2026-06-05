@@ -135,6 +135,14 @@ async def init_db():
         for table, col, ddl in [
             ("meal_plan", "kcal", "ALTER TABLE meal_plan ADD COLUMN kcal REAL"),
             ("shopping_items", "price", "ALTER TABLE shopping_items ADD COLUMN price REAL"),
+            ("meals", "fiber_g", "ALTER TABLE meals ADD COLUMN fiber_g REAL"),
+            ("meals", "sugar_g", "ALTER TABLE meals ADD COLUMN sugar_g REAL"),
+            ("meals", "sat_fat_g", "ALTER TABLE meals ADD COLUMN sat_fat_g REAL"),
+            ("meals", "sodium_mg", "ALTER TABLE meals ADD COLUMN sodium_mg REAL"),
+            ("meal_items", "fiber_g", "ALTER TABLE meal_items ADD COLUMN fiber_g REAL"),
+            ("meal_items", "sugar_g", "ALTER TABLE meal_items ADD COLUMN sugar_g REAL"),
+            ("meal_items", "sat_fat_g", "ALTER TABLE meal_items ADD COLUMN sat_fat_g REAL"),
+            ("meal_items", "sodium_mg", "ALTER TABLE meal_items ADD COLUMN sodium_mg REAL"),
         ]:
             cur = await db.execute(f"PRAGMA table_info({table})")
             cols = [r[1] for r in await cur.fetchall()]
@@ -597,19 +605,26 @@ async def add_meal(member: str, meal_type: str, description: str, totals: dict,
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """INSERT INTO meals
-               (member, meal_type, description, kcal_total, protein_g, carbs_g, fat_g, eaten_at, logged_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)""",
+               (member, meal_type, description, kcal_total, protein_g, carbs_g, fat_g,
+                fiber_g, sugar_g, sat_fat_g, sodium_mg, eaten_at, logged_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)""",
             (member, meal_type, description,
              totals.get("kcal_total"), totals.get("protein_g"),
-             totals.get("carbs_g"), totals.get("fat_g"), eaten_at, logged_by),
+             totals.get("carbs_g"), totals.get("fat_g"),
+             totals.get("fiber_g"), totals.get("sugar_g"),
+             totals.get("sat_fat_g"), totals.get("sodium_mg"), eaten_at, logged_by),
         )
         meal_id = cursor.lastrowid
         for it in items or []:
             await db.execute(
-                """INSERT INTO meal_items (meal_id, name, grams, kcal, protein_g, carbs_g, fat_g)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO meal_items
+                   (meal_id, name, grams, kcal, protein_g, carbs_g, fat_g,
+                    fiber_g, sugar_g, sat_fat_g, sodium_mg)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (meal_id, it.get("name"), it.get("grams"), it.get("kcal"),
-                 it.get("protein_g"), it.get("carbs_g"), it.get("fat_g")),
+                 it.get("protein_g"), it.get("carbs_g"), it.get("fat_g"),
+                 it.get("fiber_g"), it.get("sugar_g"),
+                 it.get("sat_fat_g"), it.get("sodium_mg")),
             )
         await db.commit()
     return {"id": meal_id, "member": member, "meal_type": meal_type}
@@ -745,13 +760,17 @@ async def get_day_totals(member: str, day: str) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """SELECT COALESCE(SUM(kcal_total),0), COALESCE(SUM(protein_g),0),
-                      COALESCE(SUM(carbs_g),0), COALESCE(SUM(fat_g),0), COUNT(*)
+                      COALESCE(SUM(carbs_g),0), COALESCE(SUM(fat_g),0),
+                      COALESCE(SUM(fiber_g),0), COALESCE(SUM(sugar_g),0),
+                      COALESCE(SUM(sat_fat_g),0), COALESCE(SUM(sodium_mg),0), COUNT(*)
                FROM meals WHERE member = ? AND DATE(eaten_at) = ?""",
             (member, day),
         )
         r = await cursor.fetchone()
     return {"kcal": round(r[0], 1), "protein_g": round(r[1], 1),
-            "carbs_g": round(r[2], 1), "fat_g": round(r[3], 1), "meals": r[4]}
+            "carbs_g": round(r[2], 1), "fat_g": round(r[3], 1),
+            "fiber_g": round(r[4], 1), "sugar_g": round(r[5], 1),
+            "sat_fat_g": round(r[6], 1), "sodium_mg": round(r[7], 1), "meals": r[8]}
 
 
 # ---- food_diary: idratazione ----
@@ -864,6 +883,17 @@ async def check_shopping_item(name: str) -> bool:
         cursor = await db.execute(
             "UPDATE shopping_items SET checked = 1 WHERE checked = 0 AND LOWER(name) LIKE LOWER(?)",
             (f"%{name}%",),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def toggle_shopping_item(item_id: int) -> bool:
+    """Inverte lo stato checked di una voce spesa per id. Ritorna True se trovata."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE shopping_items SET checked = 1 - checked WHERE id = ?",
+            (int(item_id),),
         )
         await db.commit()
         return cursor.rowcount > 0

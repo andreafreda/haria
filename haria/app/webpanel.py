@@ -17,6 +17,7 @@ from memory import (
     get_meals, get_day_totals, get_hydration_day, get_shopping_list,
     get_weight_history, export_meals, get_profile,
     get_pantry, get_pantry_expiring, get_logged_days,
+    toggle_shopping_item, upsert_profile,
 )
 from modules.food_diary import compute_macro_targets
 import config as cfg
@@ -62,6 +63,15 @@ th{background:#eef2fb}
 #cin{flex:1;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:14px}
 #cbtn{padding:10px 18px;background:#3367d6;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer}
 #cbtn:disabled{opacity:.5}
+input[type=checkbox]{width:18px;height:18px;cursor:pointer}
+.efield{display:inline-block;margin:4px 8px 4px 0}
+.efield label{font-size:12px;color:#888;display:block}
+.efield input,.efield select{padding:6px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:120px}
+.btn{padding:8px 16px;background:#3367d6;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.5}
+.bar{display:inline-block;background:#3367d6;border-radius:3px 3px 0 0;width:18px;vertical-align:bottom}
+.chart{display:flex;align-items:flex-end;gap:4px;height:120px;padding:8px 0}
+.chart .col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;font-size:10px;color:#888}
 """
 
 
@@ -184,6 +194,16 @@ async def _h_diary(request):
         body += "</div>"
     logged = await get_logged_days(30)
     if logged:
+        chrono = sorted(logged, key=lambda x: x["day"])
+        kmax = max((c["kcal"] or 0) for c in chrono) or 1
+        body += "<h3 style='margin-top:24px'>Andamento kcal/giorno</h3><div class='card'><div class='chart'>"
+        for c in chrono:
+            k = c["kcal"] or 0
+            h = round(100 * k / kmax) + 2
+            body += (f"<div class='col' title='{c['day']}: {k} kcal'>"
+                     f"<span class='bar' style='height:{h}px'></span>"
+                     f"{c['day'][5:]}</div>")
+        body += "</div></div>"
         body += "<h3 style='margin-top:24px'>Storico (ultimi 30 giorni con pasti registrati)</h3>"
         body += "<table><tr><th>Giorno</th><th>Membri</th><th>Pasti</th><th>kcal</th></tr>"
         for ld in logged:
@@ -219,7 +239,86 @@ async def _h_profiles(request):
                 for h in hist:
                     body += f"<tr><td>{_e(h['logged_at'])}</td><td>{_e(h['weight_kg'])}</td><td>{_e(h['bmi'] or '')}</td></tr>"
                 body += "</table></div>"
+        body += "<h2>Modifica profilo</h2>"
+        for p in profs:
+            body += _profile_edit_form(p)
+        body += """<script>
+document.querySelectorAll('.prof-edit').forEach(f=>f.addEventListener('submit',async e=>{
+  e.preventDefault();const btn=f.querySelector('button'),msg=f.querySelector('.savemsg');
+  const d={member:f.dataset.member};
+  f.querySelectorAll('input,select').forEach(i=>{if(i.name)d[i.name]=i.value;});
+  btn.disabled=true;msg.textContent='…';
+  try{const r=await fetch('./api/profile/save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(d)});const j=await r.json();
+    msg.textContent=j.ok?('✔ salvato'+(j.bmi?' (BMI '+j.bmi+')'):''):(j.error||'errore');}
+  catch(err){msg.textContent='errore di rete';}
+  btn.disabled=false;}));
+</script>"""
     return _page("Profili", body)
+
+
+_GOALS = ["", "mantenimento", "dimagrimento", "aumento massa"]
+_ACTS = ["", "sedentario", "leggero", "moderato", "intenso", "molto intenso"]
+_SEXES = ["", "M", "F"]
+
+
+def _profile_edit_form(p: dict) -> str:
+    def num(name, label, val):
+        return (f"<div class='efield'><label>{label}</label>"
+                f"<input type='number' step='any' name='{name}' value='{_e(val if val is not None else '')}'></div>")
+
+    def sel(name, label, val, opts):
+        o = "".join(f"<option {'selected' if (val or '')==x else ''}>{_e(x)}</option>" for x in opts)
+        return f"<div class='efield'><label>{label}</label><select name='{name}'>{o}</select></div>"
+
+    def txt(name, label, val):
+        return (f"<div class='efield'><label>{label}</label>"
+                f"<input type='text' name='{name}' value='{_e(val or '')}'></div>")
+
+    return (f"<form class='card prof-edit' data-member=\"{_e(p['member'])}\">"
+            f"<b>{_e(p['member'].capitalize())}</b><br>"
+            + sel("sex", "Sesso", p.get("sex"), _SEXES)
+            + num("age", "Età", p.get("age"))
+            + num("height_cm", "Altezza cm", p.get("height_cm"))
+            + num("weight_kg", "Peso kg", p.get("weight_kg"))
+            + sel("goal", "Obiettivo", p.get("goal"), _GOALS)
+            + sel("activity_level", "Attività", p.get("activity_level"), _ACTS)
+            + num("kcal_target", "kcal/g", p.get("kcal_target"))
+            + txt("allergies", "Allergie", p.get("allergies"))
+            + txt("preferences", "Preferenze", p.get("preferences"))
+            + txt("restrictions", "Restrizioni", p.get("restrictions"))
+            + "<br><button class='btn' type='submit'>Salva</button>"
+            "<span class='muted savemsg' style='margin-left:10px'></span></form>")
+
+
+async def _h_profile_save(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON non valido"}, status=400)
+    member = (data.get("member") or "").strip().lower()
+    if not member:
+        return web.json_response({"error": "Membro mancante"}, status=400)
+    fields: dict = {}
+    for k in ("sex", "goal", "activity_level", "allergies", "preferences", "restrictions"):
+        v = (data.get(k) or "").strip()
+        fields[k] = v or None
+    for k in ("age", "height_cm", "weight_kg", "kcal_target"):
+        raw = data.get(k)
+        if raw not in (None, ""):
+            try:
+                fields[k] = float(raw)
+            except (TypeError, ValueError):
+                pass
+    w, h = fields.get("weight_kg"), fields.get("height_cm")
+    if w and h:
+        fields["bmi"] = round(w / ((h / 100) ** 2), 1)
+    try:
+        await upsert_profile(member, fields)
+    except Exception as e:
+        logger.error("Profile save error: %s", e)
+        return web.json_response({"error": "Errore salvataggio"}, status=500)
+    return web.json_response({"ok": True, "bmi": fields.get("bmi")})
 
 
 async def _h_shopping(request):
@@ -241,12 +340,32 @@ async def _h_shopping(request):
             sub_lbl = f" <span class='muted'>€{sub:.2f}</span>" if sub else ""
             body += f"<div class='card'><b>{_e(cat)}</b>{sub_lbl}<table>"
             for it in lst:
-                mark = "<span class='chk'>✔</span> " if it["checked"] else ""
+                chk = "checked" if it["checked"] else ""
                 price = f"€{it['price']:.2f}" if it.get("price") is not None else ""
-                body += (f"<tr><td>{mark}{_e(it['name'])}</td><td class='muted'>{_e(it['qty'] or '')}</td>"
+                style = "text-decoration:line-through;color:#999" if it["checked"] else ""
+                body += (f"<tr><td><input type='checkbox' class='shopchk' data-id='{it['id']}' {chk}> "
+                         f"<span style='{style}'>{_e(it['name'])}</span></td>"
+                         f"<td class='muted'>{_e(it['qty'] or '')}</td>"
                          f"<td class='muted'>{price}</td></tr>")
             body += "</table></div>"
+    body += """<script>
+document.querySelectorAll('.shopchk').forEach(c=>c.addEventListener('change',async e=>{
+  const id=e.target.dataset.id;e.target.disabled=true;
+  try{await fetch('./api/shopping/toggle',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:parseInt(id)})});location.reload();}
+  catch(err){e.target.disabled=false;}
+}));
+</script>"""
     return _page("Spesa", body)
+
+
+async def _h_shopping_toggle(request):
+    try:
+        data = await request.json()
+        ok = await toggle_shopping_item(int(data.get("id")))
+    except Exception:
+        return web.json_response({"error": "Richiesta non valida"}, status=400)
+    return web.json_response({"ok": ok})
 
 
 async def _h_pantry(request):
@@ -346,6 +465,8 @@ def build_web_app() -> web.Application:
     app.router.add_get("/diary", _h_diary)
     app.router.add_get("/profiles", _h_profiles)
     app.router.add_get("/shopping", _h_shopping)
+    app.router.add_post("/api/shopping/toggle", _h_shopping_toggle)
+    app.router.add_post("/api/profile/save", _h_profile_save)
     app.router.add_get("/pantry", _h_pantry)
     app.router.add_get("/chat", _h_chat)
     app.router.add_post("/api/chat", _h_chat_api)
