@@ -151,6 +151,14 @@ async def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, domain)
             );
+            CREATE TABLE IF NOT EXISTS error_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+                source TEXT,
+                level TEXT,
+                message TEXT NOT NULL,
+                traceback TEXT
+            );
         """)
         # migrazione: i briefing/blocklist creati dalla chat web avevano user_id
         # 'ha_chat_<chatid>' (non consegnabile via Telegram, int() crasha). Normalizza
@@ -620,6 +628,41 @@ async def get_news_blocks(user_id: str) -> list[str]:
         )
         rows = await cursor.fetchall()
     return [r[0] for r in rows]
+
+
+# ---- error log (eccezioni: pannello /logs + notifica HA) ----
+
+async def add_error_log(source: str, level: str, message: str, traceback: str = "") -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO error_log (source, level, message, traceback) VALUES (?, ?, ?, ?)",
+            (source, level, message, traceback),
+        )
+        # retention: tieni solo gli ultimi 500
+        await db.execute(
+            "DELETE FROM error_log WHERE id NOT IN "
+            "(SELECT id FROM error_log ORDER BY id DESC LIMIT 500)"
+        )
+        await db.commit()
+
+
+async def get_error_logs(limit: int = 100) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, ts, source, level, message, traceback FROM error_log "
+            "ORDER BY id DESC LIMIT ?",
+            (int(limit),),
+        )
+        rows = await cursor.fetchall()
+    cols = ("id", "ts", "source", "level", "message", "traceback")
+    return [dict(zip(cols, r)) for r in rows]
+
+
+async def clear_error_logs() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM error_log")
+        await db.commit()
+        return cursor.rowcount
 
 
 # ---- food_diary: profili ----

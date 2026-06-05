@@ -12,6 +12,7 @@ import scheduler
 import notifier
 import webpanel
 import mqtt_pub
+import errorlog
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 logging.basicConfig(
@@ -95,6 +96,8 @@ async def main():
 
     logger.info("Inizializzazione DB...")
     await init_db()
+
+    errorlog.install()
 
     acquired = await _acquire_bot(token)
     if not acquired:

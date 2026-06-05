@@ -19,6 +19,7 @@ from memory import (
     get_pantry, get_pantry_expiring, get_logged_days,
     toggle_shopping_item, upsert_profile,
     get_user_briefings, add_briefing, update_briefing, deactivate_briefing,
+    get_error_logs, clear_error_logs,
 )
 from modules.food_diary import compute_macro_targets
 from modules import news
@@ -83,7 +84,7 @@ def _page(title: str, body: str) -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA — Diario Alimentare</header>
-<nav><a href="./">Piano</a><a href="./month">Mese</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./briefings">Notizie</a><a href="./chat">Chat</a><a href="./export.csv">Export CSV</a></nav>
+<nav><a href="./">Piano</a><a href="./month">Mese</a><a href="./diary">Diario</a><a href="./profiles">Profili</a><a href="./shopping">Spesa</a><a href="./pantry">Dispensa</a><a href="./briefings">Notizie</a><a href="./chat">Chat</a><a href="./logs">Log</a><a href="./export.csv">Export CSV</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=page, content_type="text/html")
 
@@ -591,6 +592,40 @@ async def _h_chat_api(request):
         return web.json_response({"error": "Errore interno"}, status=500)
 
 
+async def _h_logs(request):
+    logs = await get_error_logs(200)
+    body = "<h2>Log errori / eccezioni</h2>"
+    body += ("<div class='card muted'>Ultimi errori catturati da HARIA. Ogni errore "
+             "invia anche una notifica sull'app Home Assistant.</div>")
+    if not logs:
+        body += "<div class='card muted'>Nessun errore registrato. 🎉</div>"
+    else:
+        body += ("<button class='btn' id='clrbtn' style='background:#c0392b;margin-bottom:12px'>"
+                 "Svuota log</button>")
+        for r in logs:
+            tb = _e(r.get("traceback") or "")
+            tb_html = (f"<details style='margin-top:6px'><summary class='muted'>traceback</summary>"
+                       f"<pre style='white-space:pre-wrap;font-size:12px;overflow-x:auto'>{tb}</pre></details>"
+                       if tb else "")
+            body += (f"<div class='card'><span class='muted'>{_e(r['ts'])} · "
+                     f"<b>{_e(r['source'])}</b> · {_e(r['level'])}</span>"
+                     f"<div style='margin-top:4px;white-space:pre-wrap'>{_e(r['message'])}</div>"
+                     f"{tb_html}</div>")
+        body += """<script>
+document.getElementById('clrbtn').addEventListener('click',async e=>{
+  if(!confirm('Svuotare tutti i log?'))return;e.target.disabled=true;
+  try{await fetch('./api/logs/clear',{method:'POST'});location.reload();}
+  catch(err){e.target.disabled=false;}
+});
+</script>"""
+    return _page("Log", body)
+
+
+async def _h_logs_clear(request):
+    n = await clear_error_logs()
+    return web.json_response({"ok": True, "deleted": n})
+
+
 async def _h_export(request):
     end = date.today()
     start = end - timedelta(days=30)
@@ -625,6 +660,8 @@ def build_web_app() -> web.Application:
     app.router.add_post("/api/briefings/delete", _h_briefings_delete)
     app.router.add_get("/chat", _h_chat)
     app.router.add_post("/api/chat", _h_chat_api)
+    app.router.add_get("/logs", _h_logs)
+    app.router.add_post("/api/logs/clear", _h_logs_clear)
     app.router.add_get("/export.csv", _h_export)
     return app
 
