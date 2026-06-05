@@ -879,6 +879,12 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         return json.dumps({"ok": ok, "id": inputs["id"]}, ensure_ascii=False)
 
     if name == "log_meal":
+        if inputs.get("kcal_total") is None:
+            return json.dumps(
+                {"ok": False, "error": "kcal_total mancante: stima le kcal del pasto "
+                 "(per QUESTO membro e la sua porzione) e richiama log_meal."},
+                ensure_ascii=False,
+            )
         totals = {
             "kcal_total": inputs.get("kcal_total"),
             "protein_g": inputs.get("protein_g"),
