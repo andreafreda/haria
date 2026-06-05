@@ -1,4 +1,4 @@
-# Piano Progeo — 4 settimane (Russolillo, 2023-06-09)
+# Piano Progeo — 4 settimane
 
 Piano dettagliato a menù giornaliero per Andrea, target ~1848 kcal. Struttura
 giornaliera: colazione / metà mattina / pranzo / merenda / cena / spuntino serale.
