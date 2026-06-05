@@ -18,7 +18,7 @@ from memory import (
     get_weight_history, export_meals, get_profile,
     get_pantry, get_pantry_expiring, get_logged_days,
     toggle_shopping_item, upsert_profile,
-    get_user_briefings, add_briefing, update_briefing, deactivate_briefing,
+    get_user_briefings, get_active_briefings, add_briefing, update_briefing, deactivate_briefing,
     get_error_logs, clear_error_logs,
 )
 from modules.food_diary import compute_macro_targets
@@ -413,6 +413,23 @@ def _briefing_user_id() -> str | None:
     return str(u["chat_id"])
 
 
+def _briefing_users() -> list[dict]:
+    """Utenti con chat_id: candidati destinatari briefing."""
+    out = []
+    for u in cfg.get("users", []):
+        cid = u.get("chat_id")
+        if cid:
+            out.append({"chat_id": str(cid), "name": u.get("name") or str(cid)})
+    return out
+
+
+def _user_name(uid: str) -> str:
+    for u in _briefing_users():
+        if u["chat_id"] == str(uid):
+            return u["name"]
+    return str(uid)
+
+
 def _topics_to_text(topics_json: str) -> str:
     """Serializza i topics in righe editabili: 'tema | sito1, sito2'."""
     lines = []
@@ -451,7 +468,17 @@ def _briefing_form(b: dict | None) -> str:
     title = f"Briefing #{b['id']}" if b else "Nuovo briefing"
     del_btn = (f"<button type='button' class='btn brief-del' data-id='{b['id']}' "
                f"style='background:#c0392b;margin-left:8px'>Elimina</button>") if b else ""
+    sel_uid = str(b["user_id"]) if b else ""
+    users = _briefing_users()
+    opts = "".join(
+        f"<option value='{_e(u['chat_id'])}'"
+        f"{' selected' if u['chat_id'] == sel_uid else ''}>{_e(u['name'])}</option>"
+        for u in users
+    )
+    user_field = ("<div class='efield'><label>Destinatario</label>"
+                  f"<select name='user_id' style='padding:5px'>{opts}</select></div>")
     return (f"<form class='card brief-edit' data-id=\"{bid}\"><b>{title}</b><br>"
+            f"{user_field}"
             "<div class='efield' style='display:block'><label>Temi (uno per riga; "
             "opzionale «| sito1, sito2» per limitare le fonti)</label>"
             f"<textarea name='topics' rows='4' style='width:100%;max-width:520px;"
@@ -465,18 +492,15 @@ def _briefing_form(b: dict | None) -> str:
 
 
 async def _h_briefings(request):
-    uid = _briefing_user_id()
+    users = _briefing_users()
     body = "<h2>Briefing notizie programmati</h2>"
-    if not uid:
+    if not users:
         body += "<div class='card muted'>Nessun utente configurato.</div>"
         return _page("Notizie", body)
-    items = await get_user_briefings(uid)
-    u = _chat_user() or {}
-    dest = _e(u.get("name") or "utente")
-    body += (f"<div class='card'>Destinatario: <b>{dest}</b> "
-             f"<span class='muted'>(chat_id {_e(uid)}) — riceve i briefing su Telegram</span></div>")
-    body += ("<div class='card muted'>Ogni briefing cerca i temi sul web e ti manda un riassunto "
-             "via Telegram agli orari del cron. Es. cron <code>0 8 * * *</code> = ogni giorno alle 8:00.</div>")
+    items = await get_active_briefings()
+    body += ("<div class='card muted'>Ogni briefing cerca i temi sul web e manda un riassunto "
+             "via Telegram al destinatario scelto agli orari del cron. "
+             "Es. cron <code>0 8 * * *</code> = ogni giorno alle 8:00.</div>")
     if not items:
         body += "<div class='card muted'>Nessun briefing configurato.</div>"
     for b in items:
@@ -486,7 +510,8 @@ async def _h_briefings(request):
 async function briefSave(f){
   const msg=f.querySelector('.savemsg'),btn=f.querySelector('button[type=submit]');
   const d={topics:f.querySelector('[name=topics]').value,cron:f.querySelector('[name=cron]').value,
-    num_news:parseInt(f.querySelector('[name=num_news]').value)||5};
+    num_news:parseInt(f.querySelector('[name=num_news]').value)||5,
+    user_id:f.querySelector('[name=user_id]').value};
   if(f.dataset.id)d.id=parseInt(f.dataset.id);
   btn.disabled=true;msg.textContent='…';
   try{const r=await fetch('./api/briefings/save',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -506,13 +531,17 @@ document.querySelectorAll('.brief-del').forEach(b=>b.addEventListener('click',as
 
 
 async def _h_briefings_save(request):
-    uid = _briefing_user_id()
-    if not uid:
+    users = _briefing_users()
+    if not users:
         return web.json_response({"error": "Nessun utente configurato"}, status=503)
     try:
         data = await request.json()
     except Exception:
         return web.json_response({"error": "JSON non valido"}, status=400)
+    valid_uids = {u["chat_id"] for u in users}
+    uid = str(data.get("user_id") or "").strip() or users[0]["chat_id"]
+    if uid not in valid_uids:
+        return web.json_response({"error": "Destinatario non valido"}, status=400)
     cron = (data.get("cron") or "").strip()
     topics = _parse_topics_input(data.get("topics") or "")
     if not topics:
@@ -526,7 +555,7 @@ async def _h_briefings_save(request):
     topics_json = news._dump_topics(topics)
     bid = data.get("id")
     if bid:
-        b = await update_briefing(int(bid), uid, topics_json, cron, num_news)
+        b = await update_briefing(int(bid), None, topics_json, cron, num_news, new_user_id=uid)
         if not b:
             return web.json_response({"error": "Briefing non trovato"}, status=404)
         scheduler.cancel_briefing(b["id"])
@@ -541,15 +570,12 @@ async def _h_briefings_save(request):
 
 
 async def _h_briefings_delete(request):
-    uid = _briefing_user_id()
-    if not uid:
-        return web.json_response({"error": "Nessun utente configurato"}, status=503)
     try:
         data = await request.json()
         bid = int(data.get("id"))
     except Exception:
         return web.json_response({"error": "Richiesta non valida"}, status=400)
-    ok = await deactivate_briefing(bid, uid)
+    ok = await deactivate_briefing(bid)
     if ok:
         scheduler.cancel_briefing(bid)
     return web.json_response({"ok": ok})

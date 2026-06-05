@@ -569,7 +569,8 @@ async def deactivate_briefing(briefing_id: int, user_id: str | None = None) -> b
 
 async def update_briefing(briefing_id: int, user_id: str | None = None,
                           topics: str | None = None, cron: str | None = None,
-                          num_news: int | None = None) -> dict | None:
+                          num_news: int | None = None,
+                          new_user_id: str | None = None) -> dict | None:
     sets: list[str] = []
     params: list = []
     if topics is not None:
@@ -578,6 +579,8 @@ async def update_briefing(briefing_id: int, user_id: str | None = None,
         sets.append("cron = ?"); params.append(cron)
     if num_news is not None:
         sets.append("num_news = ?"); params.append(int(num_news))
+    if new_user_id is not None:
+        sets.append("user_id = ?"); params.append(new_user_id)
     if not sets:
         return None
     where = "id = ? AND active = 1"
