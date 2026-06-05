@@ -467,6 +467,10 @@ async def _h_briefings(request):
         body += "<div class='card muted'>Nessun utente configurato.</div>"
         return _page("Notizie", body)
     items = await get_user_briefings(uid)
+    u = _chat_user() or {}
+    dest = _e(u.get("name") or "utente")
+    body += (f"<div class='card'>Destinatario: <b>{dest}</b> "
+             f"<span class='muted'>(chat_id {_e(uid)}) — riceve i briefing su Telegram</span></div>")
     body += ("<div class='card muted'>Ogni briefing cerca i temi sul web e ti manda un riassunto "
              "via Telegram agli orari del cron. Es. cron <code>0 8 * * *</code> = ogni giorno alle 8:00.</div>")
     if not items:
