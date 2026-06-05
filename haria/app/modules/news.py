@@ -71,12 +71,15 @@ async def generate(topics: str, user_id: str = "", num_news: int = _RESULTS_PER_
         max_n = _RESULTS_PER_TOPIC
     blocks = await get_news_blocks(user_id) if user_id else []
     blocks_out: list[str] = []
+    empty_topics: list[str] = []
     for it in items:
         query = _build_query(it["topic"], it.get("sources", []), blocks)
         results = await web_search.search_news(query, max_n)
         if not results:  # fallback se l'endpoint news non torna nulla
             results = await web_search.search(query, max_n)
         if not results:
+            empty_topics.append(it["topic"])
+            blocks_out.append(f"# Tema: {it['topic']}\n(NESSUNA NOTIZIA TROVATA)")
             continue
         lines = [f"# Tema: {it['topic']}"]
         for r in results:
@@ -90,6 +93,13 @@ async def generate(topics: str, user_id: str = "", num_news: int = _RESULTS_PER_
         blocks_out.append("\n".join(lines))
     if not blocks_out:
         return "Nessuna notizia trovata per i temi configurati."
+
+    # Tutti i temi a vuoto: messaggio amichevole, niente LLM.
+    if len(empty_topics) == len(items):
+        if len(empty_topics) == 1:
+            return f"📰 Non sono state trovate notizie in merito a {empty_topics[0]}."
+        lst = ", ".join(empty_topics)
+        return f"📰 Non sono state trovate notizie in merito a: {lst}."
 
     raw = "\n\n".join(blocks_out)
     from claude_engine import client, MODEL

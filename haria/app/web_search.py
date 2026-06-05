@@ -8,8 +8,12 @@ logger = logging.getLogger(__name__)
 
 
 def _search_sync(query: str, max_results: int) -> list[dict]:
-    with DDGS() as ddgs:
-        return list(ddgs.text(query, region="it-it", max_results=max_results))
+    try:
+        with DDGS() as ddgs:
+            return list(ddgs.text(query, region="it-it", max_results=max_results))
+    except Exception as e:  # ddgs alza eccezione su zero risultati
+        logger.info("search() nessun risultato per %r: %s", query, e)
+        return []
 
 
 async def search(query: str, max_results: int = 5) -> list[dict]:
@@ -21,8 +25,12 @@ async def search(query: str, max_results: int = 5) -> list[dict]:
 
 
 def _news_sync(query: str, max_results: int) -> list[dict]:
-    with DDGS() as ddgs:
-        return list(ddgs.news(query, region="it-it", max_results=max_results))
+    try:
+        with DDGS() as ddgs:
+            return list(ddgs.news(query, region="it-it", max_results=max_results))
+    except Exception as e:  # ddgs alza eccezione su zero risultati
+        logger.info("search_news() nessun risultato per %r: %s", query, e)
+        return []
 
 
 async def search_news(query: str, max_results: int = 5) -> list[dict]:
