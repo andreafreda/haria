@@ -351,6 +351,12 @@ TOOLS = [
                             "sugar_g": {"type": "number", "description": "Zuccheri (g)"},
                             "sat_fat_g": {"type": "number", "description": "Grassi saturi (g)"},
                             "sodium_mg": {"type": "number", "description": "Sodio (mg)"},
+                            "vit_c_mg": {"type": "number", "description": "Vitamina C (mg)"},
+                            "vit_d_ug": {"type": "number", "description": "Vitamina D (µg)"},
+                            "iron_mg": {"type": "number", "description": "Ferro (mg)"},
+                            "calcium_mg": {"type": "number", "description": "Calcio (mg)"},
+                            "potassium_mg": {"type": "number", "description": "Potassio (mg)"},
+                            "magnesium_mg": {"type": "number", "description": "Magnesio (mg)"},
                         },
                         "required": ["name", "grams", "kcal"],
                     },
@@ -363,6 +369,12 @@ TOOLS = [
                 "sugar_g": {"type": "number", "description": "Totale zuccheri (g)"},
                 "sat_fat_g": {"type": "number", "description": "Totale grassi saturi (g)"},
                 "sodium_mg": {"type": "number", "description": "Totale sodio (mg)"},
+                "vit_c_mg": {"type": "number", "description": "Totale vitamina C (mg)"},
+                "vit_d_ug": {"type": "number", "description": "Totale vitamina D (µg)"},
+                "iron_mg": {"type": "number", "description": "Totale ferro (mg)"},
+                "calcium_mg": {"type": "number", "description": "Totale calcio (mg)"},
+                "potassium_mg": {"type": "number", "description": "Totale potassio (mg)"},
+                "magnesium_mg": {"type": "number", "description": "Totale magnesio (mg)"},
                 "eaten_at": {"type": "string", "description": "ISO datetime se pasto passato; altrimenti ometti (= ora)"},
             },
             "required": ["member", "meal_type", "description", "kcal_total"],
@@ -771,7 +783,7 @@ TOOLS = [
 ]
 
 PROMPT = (
-    "\n- DIARIO ALIMENTARE: per registrare pasti usa log_meal e STIMA tu grammi/kcal/macro di ogni alimento (porzioni realistiche). Quando possibile stima anche i micronutrienti (fibre, zuccheri, grassi saturi, sodio)."
+    "\n- DIARIO ALIMENTARE: per registrare pasti usa log_meal e STIMA tu grammi/kcal/macro di ogni alimento (porzioni realistiche). Quando possibile stima anche i micronutrienti (fibre, zuccheri, grassi saturi, sodio) e i principali micronutrienti vitaminici/minerali (vit C, vit D, ferro, calcio, potassio, magnesio)."
     " Per peso usa log_weight, per i profili set_diet_profile/get_diet_profile."
     " Se l'utente non indica il membro, usa il nome dell'utente corrente come 'member'."
     " Un utente può registrare per un altro membro: in tal caso usa il nome del membro indicato."
@@ -904,6 +916,12 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
             "sugar_g": inputs.get("sugar_g"),
             "sat_fat_g": inputs.get("sat_fat_g"),
             "sodium_mg": inputs.get("sodium_mg"),
+            "vit_c_mg": inputs.get("vit_c_mg"),
+            "vit_d_ug": inputs.get("vit_d_ug"),
+            "iron_mg": inputs.get("iron_mg"),
+            "calcium_mg": inputs.get("calcium_mg"),
+            "potassium_mg": inputs.get("potassium_mg"),
+            "magnesium_mg": inputs.get("magnesium_mg"),
         }
         meal = await add_meal(
             member, inputs["meal_type"], inputs["description"],

@@ -186,6 +186,13 @@ async def _h_diary(request):
                      f"P {_vt(totals['protein_g'], macros['protein_target_g'] if macros else None, 'g')} · "
                      f"C {_vt(totals['carbs_g'], macros['carbs_target_g'] if macros else None, 'g')} · "
                      f"G {_vt(totals['fat_g'], macros['fat_target_g'] if macros else None, 'g')}</div>")
+        body += (f"<div class='muted' style='margin-top:6px'>micro — "
+                 f"fibre {totals['fiber_g']}g · zuccheri {totals['sugar_g']}g · "
+                 f"saturi {totals['sat_fat_g']}g · sodio {totals['sodium_mg']}mg</div>"
+                 f"<div class='muted' style='margin-top:4px'>vit/min — "
+                 f"vit C {totals['vit_c_mg']}mg · vit D {totals['vit_d_ug']}µg · "
+                 f"ferro {totals['iron_mg']}mg · calcio {totals['calcium_mg']}mg · "
+                 f"potassio {totals['potassium_mg']}mg · magnesio {totals['magnesium_mg']}mg</div>")
         if meals:
             body += "<table><tr><th>Pasto</th><th>Descrizione</th><th>kcal</th></tr>"
             for m in sorted(meals, key=lambda x: _MEAL_ORDER.get(x['meal_type'], 9)):

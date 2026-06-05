@@ -142,7 +142,11 @@ chat_id Telegram esistono solo come profilo, gestiti da chi li configura.
 - **Peso/BMI**: `log_weight`/`get_weight_history`/`update_weight`/`delete_weight`,
   trend + stats 30gg.
 - **Pasti**: `log_meal` (testo, vocale, **foto vision**), `get_meals`, `update_meal`,
-  `delete_meal`. Stima grammi/kcal/macro per alimento.
+  `delete_meal`. Stima grammi/kcal/macro per alimento, + micronutrienti (fibre,
+  zuccheri, saturi, sodio) e vitamine/minerali (vit C, vit D, ferro, calcio,
+  potassio, magnesio). Totali giornalieri nel pannello Diario.
+- **Allergie**: check euristico (14 gruppi allergeni IT) su ogni `log_meal` e
+  `set_plan_meal`; avviso esplicito se un alimento matcha le allergie del profilo.
 - **Valori nutrizionali reali**: `lookup_nutrition`/`lookup_barcode` →
   **OpenFoodFacts** (barcode/prodotti) + **USDA FoodData Central** (grezzi), fallback Claude,
   cache in `food_cache`.
@@ -313,9 +317,6 @@ La versione è in `haria/config.yaml` (`version:`), va bumpata a ogni release.
 **Sicurezza / robustezza**
 - Allowlist `control_device` (oggi Claude può chiamare qualsiasi servizio HA).
 - Test automatici (oggi solo `py_compile`).
-
-**Food**
-- Vitamine/minerali nel diario (micronutrienti base — fibre, zuccheri, saturi, sodio — già tracciati).
 
 **Piattaforma**
 - `ha_chat` → conversation agent nativo HA (Assist pipeline).

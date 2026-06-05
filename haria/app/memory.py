@@ -143,6 +143,18 @@ async def init_db():
             ("meal_items", "sugar_g", "ALTER TABLE meal_items ADD COLUMN sugar_g REAL"),
             ("meal_items", "sat_fat_g", "ALTER TABLE meal_items ADD COLUMN sat_fat_g REAL"),
             ("meal_items", "sodium_mg", "ALTER TABLE meal_items ADD COLUMN sodium_mg REAL"),
+            ("meals", "vit_c_mg", "ALTER TABLE meals ADD COLUMN vit_c_mg REAL"),
+            ("meals", "vit_d_ug", "ALTER TABLE meals ADD COLUMN vit_d_ug REAL"),
+            ("meals", "iron_mg", "ALTER TABLE meals ADD COLUMN iron_mg REAL"),
+            ("meals", "calcium_mg", "ALTER TABLE meals ADD COLUMN calcium_mg REAL"),
+            ("meals", "potassium_mg", "ALTER TABLE meals ADD COLUMN potassium_mg REAL"),
+            ("meals", "magnesium_mg", "ALTER TABLE meals ADD COLUMN magnesium_mg REAL"),
+            ("meal_items", "vit_c_mg", "ALTER TABLE meal_items ADD COLUMN vit_c_mg REAL"),
+            ("meal_items", "vit_d_ug", "ALTER TABLE meal_items ADD COLUMN vit_d_ug REAL"),
+            ("meal_items", "iron_mg", "ALTER TABLE meal_items ADD COLUMN iron_mg REAL"),
+            ("meal_items", "calcium_mg", "ALTER TABLE meal_items ADD COLUMN calcium_mg REAL"),
+            ("meal_items", "potassium_mg", "ALTER TABLE meal_items ADD COLUMN potassium_mg REAL"),
+            ("meal_items", "magnesium_mg", "ALTER TABLE meal_items ADD COLUMN magnesium_mg REAL"),
         ]:
             cur = await db.execute(f"PRAGMA table_info({table})")
             cols = [r[1] for r in await cur.fetchall()]
@@ -606,25 +618,33 @@ async def add_meal(member: str, meal_type: str, description: str, totals: dict,
         cursor = await db.execute(
             """INSERT INTO meals
                (member, meal_type, description, kcal_total, protein_g, carbs_g, fat_g,
-                fiber_g, sugar_g, sat_fat_g, sodium_mg, eaten_at, logged_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)""",
+                fiber_g, sugar_g, sat_fat_g, sodium_mg,
+                vit_c_mg, vit_d_ug, iron_mg, calcium_mg, potassium_mg, magnesium_mg,
+                eaten_at, logged_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)""",
             (member, meal_type, description,
              totals.get("kcal_total"), totals.get("protein_g"),
              totals.get("carbs_g"), totals.get("fat_g"),
              totals.get("fiber_g"), totals.get("sugar_g"),
-             totals.get("sat_fat_g"), totals.get("sodium_mg"), eaten_at, logged_by),
+             totals.get("sat_fat_g"), totals.get("sodium_mg"),
+             totals.get("vit_c_mg"), totals.get("vit_d_ug"), totals.get("iron_mg"),
+             totals.get("calcium_mg"), totals.get("potassium_mg"), totals.get("magnesium_mg"),
+             eaten_at, logged_by),
         )
         meal_id = cursor.lastrowid
         for it in items or []:
             await db.execute(
                 """INSERT INTO meal_items
                    (meal_id, name, grams, kcal, protein_g, carbs_g, fat_g,
-                    fiber_g, sugar_g, sat_fat_g, sodium_mg)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    fiber_g, sugar_g, sat_fat_g, sodium_mg,
+                    vit_c_mg, vit_d_ug, iron_mg, calcium_mg, potassium_mg, magnesium_mg)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (meal_id, it.get("name"), it.get("grams"), it.get("kcal"),
                  it.get("protein_g"), it.get("carbs_g"), it.get("fat_g"),
                  it.get("fiber_g"), it.get("sugar_g"),
-                 it.get("sat_fat_g"), it.get("sodium_mg")),
+                 it.get("sat_fat_g"), it.get("sodium_mg"),
+                 it.get("vit_c_mg"), it.get("vit_d_ug"), it.get("iron_mg"),
+                 it.get("calcium_mg"), it.get("potassium_mg"), it.get("magnesium_mg")),
             )
         await db.commit()
     return {"id": meal_id, "member": member, "meal_type": meal_type}
@@ -762,7 +782,10 @@ async def get_day_totals(member: str, day: str) -> dict:
             """SELECT COALESCE(SUM(kcal_total),0), COALESCE(SUM(protein_g),0),
                       COALESCE(SUM(carbs_g),0), COALESCE(SUM(fat_g),0),
                       COALESCE(SUM(fiber_g),0), COALESCE(SUM(sugar_g),0),
-                      COALESCE(SUM(sat_fat_g),0), COALESCE(SUM(sodium_mg),0), COUNT(*)
+                      COALESCE(SUM(sat_fat_g),0), COALESCE(SUM(sodium_mg),0),
+                      COALESCE(SUM(vit_c_mg),0), COALESCE(SUM(vit_d_ug),0),
+                      COALESCE(SUM(iron_mg),0), COALESCE(SUM(calcium_mg),0),
+                      COALESCE(SUM(potassium_mg),0), COALESCE(SUM(magnesium_mg),0), COUNT(*)
                FROM meals WHERE member = ? AND DATE(eaten_at) = ?""",
             (member, day),
         )
@@ -770,7 +793,10 @@ async def get_day_totals(member: str, day: str) -> dict:
     return {"kcal": round(r[0], 1), "protein_g": round(r[1], 1),
             "carbs_g": round(r[2], 1), "fat_g": round(r[3], 1),
             "fiber_g": round(r[4], 1), "sugar_g": round(r[5], 1),
-            "sat_fat_g": round(r[6], 1), "sodium_mg": round(r[7], 1), "meals": r[8]}
+            "sat_fat_g": round(r[6], 1), "sodium_mg": round(r[7], 1),
+            "vit_c_mg": round(r[8], 1), "vit_d_ug": round(r[9], 1),
+            "iron_mg": round(r[10], 1), "calcium_mg": round(r[11], 1),
+            "potassium_mg": round(r[12], 1), "magnesium_mg": round(r[13], 1), "meals": r[14]}
 
 
 # ---- food_diary: idratazione ----
