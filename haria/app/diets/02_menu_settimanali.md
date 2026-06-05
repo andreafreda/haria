@@ -1,4 +1,4 @@
-# Menù settimanali di esempio (Russolillo)
+# Menù settimanali di esempio
 
 Varianti di menù giornaliero da cui trarre spunto. Colazione tipo per tutti i
 giorni salvo diverso: latte/yogurt + 30 g biscotti o fette; caffè senza zucchero.
