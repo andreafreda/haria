@@ -107,12 +107,15 @@ async def main():
     notifier.set_bot(app.bot)
 
     mods = cfg.get("modules", {})
-    if mods.get("agenda", False) or mods.get("reminders", False) or mods.get("food_diary", False):
+    if (mods.get("agenda", False) or mods.get("reminders", False)
+            or mods.get("food_diary", False) or mods.get("news", False)):
         await scheduler.start(app.bot)
     if mods.get("food_diary", False):
         scheduler.schedule_food_jobs(app.bot)
         await mqtt_pub.start()
         scheduler.schedule_mqtt_refresh()
+    if mods.get("news", False):
+        await scheduler.load_briefings()
 
     web_runner = await webpanel.start()
 

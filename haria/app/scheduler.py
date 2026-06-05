@@ -7,6 +7,7 @@ from memory import (
     get_active_reminders, deactivate_reminder,
     get_meal_plan, get_day_totals, get_profile,
     get_pantry_expiring, get_shopping_cost,
+    get_active_briefings,
 )
 import config as cfg
 
@@ -72,6 +73,57 @@ def cancel_job(reminder_id: int):
         _scheduler.remove_job(f"reminder_{reminder_id}")
     except Exception:
         pass
+
+
+# ---- briefing news ----
+
+async def _fire_briefing(briefing_id: int, user_id: str, topics: str):
+    try:
+        import news
+        text = await news.generate(topics)
+        await _bot.send_message(chat_id=int(user_id), text=text)
+        logger.info("Briefing %s inviato a %s", briefing_id, user_id)
+    except Exception as e:
+        logger.error("Briefing %s fallito: %s", briefing_id, e)
+
+
+def _schedule_briefing_one(b: dict) -> bool:
+    try:
+        trigger = CronTrigger.from_crontab(b["cron"])
+    except ValueError as e:
+        logger.warning("Cron non valido per briefing %s: %s", b["id"], e)
+        return False
+    _scheduler.add_job(
+        _fire_briefing, trigger, id=f"briefing_{b['id']}", replace_existing=True,
+        args=[b["id"], b["user_id"], b["topics"]],
+    )
+    return True
+
+
+def schedule_briefing(b: dict) -> bool:
+    if not _scheduler:
+        return False
+    return _schedule_briefing_one(b)
+
+
+def cancel_briefing(briefing_id: int):
+    if not _scheduler:
+        return
+    try:
+        _scheduler.remove_job(f"briefing_{briefing_id}")
+    except Exception:
+        pass
+
+
+async def load_briefings():
+    """Carica i briefing attivi nello scheduler. Richiede scheduler avviato."""
+    if not _scheduler:
+        return
+    n = 0
+    for b in await get_active_briefings():
+        if _schedule_briefing_one(b):
+            n += 1
+    logger.info("Briefing caricati: %d.", n)
 
 
 def shutdown():

@@ -179,6 +179,16 @@ prima di sovrascrivere (`confirm=true`).
 ### `web_search` — ricerca web
 `search_web` via DuckDuckGo (`ddgs`) per informazioni in tempo reale.
 
+### `news` — briefing notizie configurabile
+Briefing notizie ricorrente, **temi e orari definiti dall'utente** via chat (non
+hardcoded). Per ogni briefing HARIA cerca sul web i temi indicati, riassume con
+Haiku e invia su Telegram all'orario cron impostato.
+- `create_briefing(topics, cron)` — es. "ogni mattina alle 7:30 notizie su AI e Inter".
+  HARIA converte l'orario in espressione cron.
+- `list_briefings` / `update_briefing(id, …)` / `delete_briefing(id)`.
+- Per-utente; job dinamici APScheduler (`briefing_{id}`), ricaricati al boot da DB
+  (tabella `briefings`). Cron completo supportato.
+
 ### `multi_user` — messaggi tra membri
 `send_message_to_user(member, message)` — HARIA scrive proattivamente su Telegram a un altro
 membro della famiglia.
@@ -212,6 +222,7 @@ membro della famiglia.
 | `save_diet` / `delete_diet` | food_diary | Diete da PDF |
 | `update_bill` | bollette | Consumi/costi utenze da PDF |
 | `search_web` | web_search | Ricerca web |
+| `create_briefing` / `list_briefings` / `update_briefing` / `delete_briefing` | news | Briefing notizie ricorrente (temi + cron) |
 | `send_message_to_user` | multi_user | Messaggio proattivo a un membro |
 
 ---
@@ -266,6 +277,7 @@ modules:
   web_search: true
   multi_user: true
   bollette: true
+  news: true
 
 users:
   - name: "Andrea"
@@ -321,7 +333,6 @@ La versione è in `haria/config.yaml` (`version:`), va bumpata a ogni release.
 **Piattaforma**
 - `ha_chat` → conversation agent nativo HA (Assist pipeline).
 - Modulo `home_economics` (spese/budget/entrate, ricorrenti, report) — ponte con `food_diary`/`bollette`.
-- Briefing mattutino unificato (meteo + agenda + todo + scadenze).
 - Integrazione email (Gmail), reply vocale TTS su Telegram.
 - Pubblicazione HACS (`hacs.json`, metadati).
 - Companion app Android (progetto a sé).

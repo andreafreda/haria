@@ -130,6 +130,14 @@ async def init_db():
                 summary TEXT NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS briefings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                topics TEXT NOT NULL,
+                cron TEXT NOT NULL,
+                active INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         # migrazioni leggere: aggiungi colonne se mancano
         for table, col, ddl in [
@@ -462,6 +470,92 @@ async def update_reminder(reminder_id: int, user_id: str | None = None,
             (int(reminder_id),),
         )).fetchone()
     return _reminder_row(row) if row else None
+
+
+# ---- briefing news ----
+
+def _briefing_row(r) -> dict:
+    return {"id": r[0], "user_id": r[1], "topics": r[2], "cron": r[3]}
+
+
+async def add_briefing(user_id: str, topics: str, cron: str) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO briefings (user_id, topics, cron) VALUES (?, ?, ?)",
+            (user_id, topics, cron),
+        )
+        await db.commit()
+        bid = cursor.lastrowid
+    return {"id": bid, "user_id": user_id, "topics": topics, "cron": cron}
+
+
+async def get_active_briefings() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, topics, cron FROM briefings WHERE active = 1"
+        )
+        rows = await cursor.fetchall()
+    return [_briefing_row(r) for r in rows]
+
+
+async def get_user_briefings(user_id: str) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, topics, cron FROM briefings WHERE active = 1 AND user_id = ?",
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+    return [_briefing_row(r) for r in rows]
+
+
+async def get_briefing(briefing_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        row = await (await db.execute(
+            "SELECT id, user_id, topics, cron FROM briefings WHERE id = ? AND active = 1",
+            (int(briefing_id),),
+        )).fetchone()
+    return _briefing_row(row) if row else None
+
+
+async def deactivate_briefing(briefing_id: int, user_id: str | None = None) -> bool:
+    where = "id = ?"
+    params: list = [int(briefing_id)]
+    if user_id is not None:
+        where += " AND user_id = ?"
+        params.append(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(f"UPDATE briefings SET active = 0 WHERE {where}", params)
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def update_briefing(briefing_id: int, user_id: str | None = None,
+                          topics: str | None = None, cron: str | None = None) -> dict | None:
+    sets: list[str] = []
+    params: list = []
+    if topics is not None:
+        sets.append("topics = ?"); params.append(topics)
+    if cron is not None:
+        sets.append("cron = ?"); params.append(cron)
+    if not sets:
+        return None
+    where = "id = ? AND active = 1"
+    params2 = list(params) + [int(briefing_id)]
+    if user_id is not None:
+        where += " AND user_id = ?"
+        params2.append(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            f"UPDATE briefings SET {', '.join(sets)} WHERE {where}", params2
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            return None
+        row = await (await db.execute(
+            "SELECT id, user_id, topics, cron FROM briefings WHERE id = ?",
+            (int(briefing_id),),
+        )).fetchone()
+    return _briefing_row(row) if row else None
 
 
 # ---- food_diary: profili ----
