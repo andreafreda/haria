@@ -360,7 +360,7 @@ async def chat(user_id: str, user_text: str, user_config: dict,
         return fallback
 
     except RateLimitError:
-        logger.warning("Rate limit Anthropic raggiunto per user %s", user_id)
+        logger.error("Rate limit Anthropic (429) raggiunto per user %s dopo i retry SDK", user_id)
         return "⚠️ Troppe richieste in poco tempo. Riprova tra un minuto."
     except anthropic.APIError as e:
         logger.error("Errore API Anthropic: %s", e)
