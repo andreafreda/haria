@@ -121,10 +121,11 @@ CORE_TOOLS = [
 
 def get_tools() -> list[dict]:
     extra = modules.tools()
-    if extra:
-        # tool moduli prima del tool 'respond' finale
-        return CORE_TOOLS[:-1] + extra + [CORE_TOOLS[-1]]
-    return list(CORE_TOOLS)
+    head = CORE_TOOLS[:-1] + extra if extra else CORE_TOOLS[:-1]
+    # cache_control sull'ultimo tool: cacha l'intero blocco tools (statico ogni
+    # turno) riducendo input-token-per-minute e costo nel loop agentico.
+    last = {**CORE_TOOLS[-1], "cache_control": {"type": "ephemeral"}}
+    return head + [last]
 
 
 async def refresh_entity_cache() -> int:
