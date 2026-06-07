@@ -25,7 +25,7 @@ import config as cfg
 
 logger = logging.getLogger(__name__)
 
-client = anthropic.AsyncAnthropic(api_key=cfg.get("anthropic_key"))
+client = anthropic.AsyncAnthropic(api_key=cfg.get("anthropic_key"), max_retries=5)
 MODEL = "claude-haiku-4-5-20251001"
 
 CORE_TOOLS = [
