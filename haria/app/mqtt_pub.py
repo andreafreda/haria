@@ -23,6 +23,7 @@ from memory import (
     list_profiles, get_day_totals, get_hydration_day,
     get_meal_plan, get_meals, get_shopping_list, get_shopping_cost, get_profile,
     get_pantry, get_pantry_expiring, get_weight_stats,
+    get_bolletta_csv, get_bolletta_years,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,17 @@ _DEVICE = {
     "model": "food_diary",
 }
 _MEAL_ORDER = {"colazione": 0, "pranzo": 1, "snack": 2, "cena": 3}
+
+# --- Bollette (device separato) ---
+from bollette_def import UTILITIES as _BOLL_UTILITIES, metrics as _boll_metrics
+
+_BASE_BOLL = "haria/bollette"          # prefisso state topic bollette
+_DEVICE_BOLL = {
+    "identifiers": ["haria_bollette"],
+    "name": "HARIA Bollette",
+    "manufacturer": "HARIA",
+    "model": "bollette",
+}
 
 
 def _slug(s: str) -> str:
@@ -105,6 +117,7 @@ async def start():
     try:
         await publish_discovery()
         await refresh()
+        await publish_bollette()
     except Exception as e:
         logger.warning("Pubblicazione iniziale MQTT fallita: %s", e)
 
@@ -135,14 +148,17 @@ def _pub(topic: str, payload, retain: bool = True):
 def _disc_sensor(uid: str, name: str, state_topic: str, unit: str | None = None,
                  icon: str | None = None, value_template: str | None = None,
                  json_attr_topic: str | None = None, state_class: str | None = None,
-                 device_class: str | None = None):
+                 device_class: str | None = None, device: dict | None = None,
+                 object_id: str | None = None):
     cfg_topic = f"{_DISC}/sensor/{uid}/config"
     payload = {
         "name": name,
         "unique_id": uid,
         "state_topic": state_topic,
-        "device": _DEVICE,
+        "device": device or _DEVICE,
     }
+    if object_id:
+        payload["object_id"] = object_id
     if unit:
         payload["unit_of_measurement"] = unit
     if icon:
@@ -349,6 +365,30 @@ async def refresh():
     _pub(f"{_BASE}/dispensa_scadenze/attr", {"voci": [_fmt_pantry(it) for it in exp]})
 
 
+async def publish_bollette():
+    """Discovery + stato delle serie bollette (device 'HARIA Bollette').
+
+    Per ogni utility/metric pubblica un sensore per anno, stato = CSV 12 mesi.
+    Le serie sono guidate da bollette_def.UTILITIES → estendibile aggiungendo
+    una utenza lì (es. telefono), senza toccare questo file."""
+    if not _enabled:
+        return
+    cur_year = date.today().year
+    for util, d in _BOLL_UTILITIES.items():
+        label = d["label"]
+        for metric, icon, unit_label in _boll_metrics(util):
+            years = set(await get_bolletta_years(util, metric)) | {cur_year}
+            for year in sorted(years):
+                uid = f"haria_boll_{util}_{metric}_{year}"
+                topic = f"{_BASE_BOLL}/{util}/{metric}/{year}"
+                _disc_sensor(
+                    uid, f"{label} {unit_label} {year}", topic,
+                    icon=icon, device=_DEVICE_BOLL,
+                    object_id=f"bollette_{util}_{metric}_{year}",
+                )
+                _pub(topic, await get_bolletta_csv(util, metric, year))
+
+
 def request_refresh():
     """Trigger non bloccante di un refresh (da chiamare dopo mutazioni)."""
     if not _enabled:
@@ -359,3 +399,15 @@ def request_refresh():
         logger.debug("request_refresh: nessun event loop attivo, skip")
         return
     loop.create_task(refresh())
+
+
+def request_bollette_refresh():
+    """Trigger non bloccante di publish_bollette (dopo update_bill)."""
+    if not _enabled:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("request_bollette_refresh: nessun event loop attivo, skip")
+        return
+    loop.create_task(publish_bollette())

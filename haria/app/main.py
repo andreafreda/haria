@@ -127,7 +127,19 @@ async def main():
         await scheduler.start(app.bot)
     if mods.get("food_diary", False):
         scheduler.schedule_food_jobs(app.bot)
+    # seed bollette da HA (una-tantum) prima di pubblicare i sensori MQTT
+    if mods.get("bollette", False):
+        try:
+            from modules import bollette as _boll
+            n = await _boll.seed_from_ha()
+            if n:
+                logger.info("Bollette: seed iniziale da HA (%d mesi importati).", n)
+        except Exception as e:
+            logger.warning("Bollette seed fallito: %s", e)
+    # MQTT serve a food_diary e/o bollette
+    if mods.get("food_diary", False) or mods.get("bollette", False):
         await mqtt_pub.start()
+    if mods.get("food_diary", False):
         scheduler.schedule_mqtt_refresh()
     if mods.get("news", False):
         await scheduler.load_briefings()
