@@ -77,6 +77,10 @@ def _wire(monkeypatch, db):
     monkeypatch.setattr(economia, "rename_categoria", db.rename_categoria)
     monkeypatch.setattr(economia, "merge_categoria", db.merge_categoria)
     monkeypatch.setattr(economia, "reset_economia", db.reset_economia)
+    monkeypatch.setattr(economia, "set_budget", db.set_budget)
+    monkeypatch.setattr(economia, "delete_budget", db.delete_budget)
+    monkeypatch.setattr(economia, "list_budget", db.list_budget)
+    monkeypatch.setattr(economia, "get_budget_status", db.get_budget_status)
 
 
 async def test_get_saldo_conto_singolo(db, monkeypatch):
@@ -191,6 +195,56 @@ async def test_reset_economia_confirm(db, monkeypatch):
     assert data["ok"] is True
     assert data["transazioni_cancellate"] == 1
     assert await db.get_saldo("contanti") == 0
+
+
+async def test_set_budget_tool(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("set_budget", {"categoria": "Alimentari", "importo": 300}, "u1")
+    data = json.loads(out)
+    assert data["azione"] == "impostato"
+    assert data["categoria"] == "alimentari"
+    assert data["budget"] == 300
+
+
+async def test_set_budget_tool_rimuovi(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.set_budget("svago", 100)
+    out = await economia.handle("set_budget", {"categoria": "svago", "importo": 0}, "u1")
+    data = json.loads(out)
+    assert data["azione"] == "rimosso"
+    assert data["trovato"] is True
+
+
+async def test_set_budget_tool_categoria_mancante(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("set_budget", {"categoria": " ", "importo": 100}, "u1")
+    assert "Categoria mancante" in out
+
+
+async def test_get_budget_status_tool_default_mese(db, monkeypatch):
+    _wire(monkeypatch, db)
+    from datetime import date
+    oggi = date.today()
+    await db.set_budget("alimentari", 300)
+    await db.add_transazione("contanti", oggi.isoformat(), -50, "alimentari", "x")
+    out = await economia.handle("get_budget_status", {}, "u1")
+    data = json.loads(out)
+    assert data["ok"] is True
+    assert data["mese"] == oggi.month
+    assert data["budget"][0]["speso"] == 50
+
+
+async def test_get_budget_status_tool_nessun_budget(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("get_budget_status", {}, "u1")
+    data = json.loads(out)
+    assert data.get("nessun_budget") is True
+
+
+async def test_get_budget_status_tool_mese_invalido(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("get_budget_status", {"mese": 13}, "u1")
+    assert "Mese non valido" in out
 
 
 async def test_dynamic_prompt_include_categorie(db):

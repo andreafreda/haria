@@ -16,6 +16,7 @@ from memory import (
     add_transazione, get_saldo, get_saldi, riepilogo_spese,
     normalize_categoria, list_categorie, rename_categoria, merge_categoria,
     reset_economia,
+    set_budget, delete_budget, list_budget, get_budget_status,
 )
 
 NAME = "economia"
@@ -97,6 +98,40 @@ TOOLS = [
         },
     },
     {
+        "name": "set_budget",
+        "description": (
+            "Imposta o rimuove il budget mensile di spesa per una categoria. Usa quando "
+            "l'utente dice quanto vuole spendere al massimo per qualcosa "
+            "(es. 'budget di 300 euro al mese per alimentari', 'metti un tetto di 100 "
+            "per ristoranti'). Per rimuovere un budget passa importo 0. La categoria "
+            "viene normalizzata: riusa quelle esistenti."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "categoria": {"type": "string", "description": "Categoria a cui applicare il budget"},
+                "importo": {"type": "number", "description": "Tetto mensile in €. 0 = rimuove il budget."},
+            },
+            "required": ["categoria", "importo"],
+        },
+    },
+    {
+        "name": "get_budget_status",
+        "description": (
+            "Mostra lo stato dei budget per il mese: quanto speso vs budget, residuo e "
+            "percentuale per ogni categoria con un tetto impostato. Usa quando l'utente "
+            "chiede come va col budget ('sono nei budget?', 'quanto mi resta per "
+            "alimentari?', 'ho sforato?'). Default: mese corrente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "anno": {"type": "integer", "description": "Anno (default: corrente)"},
+                "mese": {"type": "integer", "description": "Mese 1-12 (default: corrente)"},
+            },
+        },
+    },
+    {
         "name": "reset_economia",
         "description": (
             "Azzera i dati del modulo economia. Operazione DISTRUTTIVA e "
@@ -135,7 +170,46 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         return await _gestisci_categorie(inputs)
     if name == "reset_economia":
         return await _reset_economia(inputs)
+    if name == "set_budget":
+        return await _set_budget(inputs)
+    if name == "get_budget_status":
+        return await _get_budget_status(inputs)
     return f"Tool sconosciuto nel modulo {NAME}: {name}"
+
+
+async def _set_budget(inputs: dict) -> str:
+    categoria = (inputs.get("categoria") or "").strip()
+    if not categoria:
+        return "Categoria mancante."
+    try:
+        importo = float(inputs["importo"])
+    except (KeyError, ValueError, TypeError):
+        return "Importo mancante o non valido."
+    if importo <= 0:
+        ok = await delete_budget(categoria)
+        return json.dumps({"ok": True, "azione": "rimosso", "categoria": categoria.lower(),
+                           "trovato": ok}, ensure_ascii=False)
+    cat = await set_budget(categoria, importo)
+    return json.dumps({"ok": True, "azione": "impostato", "categoria": cat,
+                       "budget": round(importo, 2)}, ensure_ascii=False)
+
+
+async def _get_budget_status(inputs: dict) -> str:
+    today = date.today()
+    try:
+        anno = int(inputs.get("anno") or today.year)
+        mese = int(inputs.get("mese") or today.month)
+    except (ValueError, TypeError):
+        return "Anno/mese non validi."
+    if not (1 <= mese <= 12):
+        return "Mese non valido (1-12)."
+    status = await get_budget_status(anno, mese)
+    if not status:
+        return json.dumps({"ok": True, "nessun_budget": True,
+                           "msg": "Nessun budget impostato. Usa set_budget per crearne."},
+                          ensure_ascii=False)
+    return json.dumps({"ok": True, "anno": anno, "mese": mese, "budget": status},
+                      ensure_ascii=False)
 
 
 async def _reset_economia(inputs: dict) -> str:

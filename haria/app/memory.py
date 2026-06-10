@@ -194,6 +194,11 @@ async def init_db():
                 nome TEXT NOT NULL UNIQUE,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS econ_budget (
+                categoria TEXT PRIMARY KEY,
+                importo REAL NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         # seed conti default da econ_def.CONTI (idempotente)
         for nome, d in econ_def.CONTI.items():
@@ -1671,15 +1676,86 @@ async def merge_categoria(src: str, dst: str) -> bool:
         return True
 
 
+async def set_budget(categoria: str, importo: float) -> str:
+    """Imposta (upsert) il budget mensile per una categoria. importo memorizzato
+    in valore assoluto. La rimozione si fa con delete_budget (non con importo 0 qui).
+    Ritorna la categoria canonica usata."""
+    cat = await normalize_categoria(categoria)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO econ_budget (categoria, importo, updated_at)
+               VALUES (?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(categoria) DO UPDATE SET
+                   importo=excluded.importo, updated_at=CURRENT_TIMESTAMP""",
+            (cat, abs(float(importo))),
+        )
+        await db.commit()
+    return cat
+
+
+async def delete_budget(categoria: str) -> bool:
+    cat = (categoria or "").strip().lower()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM econ_budget WHERE lower(categoria)=lower(?)", (cat,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def list_budget() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT categoria, importo FROM econ_budget ORDER BY categoria"
+        )
+        return [{"categoria": r[0], "importo": r[1]} for r in await cursor.fetchall()]
+
+
+async def get_budget_status(year: int, month: int) -> list[dict]:
+    """Per ogni categoria con budget: speso (uscite del mese), budget, residuo, perc.
+    Ordinato per perc decrescente (sforamenti prima)."""
+    ym = f"{int(year):04d}-{int(month):02d}-%"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT b.categoria, b.importo,
+                      COALESCE(-SUM(CASE WHEN t.importo < 0 THEN t.importo END), 0)
+               FROM econ_budget b
+               LEFT JOIN econ_transazioni t
+                 ON t.categoria = b.categoria AND t.data LIKE ?
+               GROUP BY b.categoria, b.importo""",
+            (ym,),
+        )
+        rows = await cursor.fetchall()
+    out = []
+    for cat, budget, speso in rows:
+        budget = float(budget)
+        speso = round(float(speso), 2)
+        residuo = round(budget - speso, 2)
+        perc = round(speso / budget * 100, 1) if budget else 0.0
+        out.append({
+            "categoria": cat,
+            "budget": budget,
+            "speso": speso,
+            "residuo": residuo,
+            "perc": perc,
+            "sforato": speso > budget,
+        })
+    out.sort(key=lambda x: x["perc"], reverse=True)
+    return out
+
+
 async def reset_economia(reset_categorie: bool = False,
                          reset_saldi: bool = False) -> dict:
-    """Reset dati economia (fine test). Svuota sempre le transazioni.
+    """Reset dati economia (fine test). Svuota sempre transazioni e budget.
     Opzionale: ripristina categorie al seed, azzera i saldi iniziali.
     Ritorna il conteggio di cio' che e' stato cancellato."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT count(*) FROM econ_transazioni")
         n_tx = (await cur.fetchone())[0]
         await db.execute("DELETE FROM econ_transazioni")
+        cur = await db.execute("SELECT count(*) FROM econ_budget")
+        n_budget = (await cur.fetchone())[0]
+        await db.execute("DELETE FROM econ_budget")
         n_cat = 0
         if reset_categorie:
             cur = await db.execute("SELECT count(*) FROM econ_categorie")
@@ -1698,6 +1774,7 @@ async def reset_economia(reset_categorie: bool = False,
             await db.execute("UPDATE econ_conti SET saldo_iniziale = 0")
         await db.commit()
     return {"transazioni_cancellate": n_tx,
+            "budget_cancellati": n_budget,
             "categorie_resettate": n_cat,
             "saldi_azzerati": n_saldi}
 

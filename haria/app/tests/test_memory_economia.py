@@ -270,3 +270,88 @@ async def test_reset_economia_saldi(db):
 async def test_reset_economia_vuoto(db):
     res = await db.reset_economia()
     assert res["transazioni_cancellate"] == 0
+
+
+async def test_reset_economia_cancella_budget(db):
+    await db.set_budget("alimentari", 300)
+    res = await db.reset_economia()
+    assert res["budget_cancellati"] == 1
+    assert await db.list_budget() == []
+
+
+# ---- budget ----
+
+async def test_set_budget_e_list(db):
+    cat = await db.set_budget("Alimentari", 300)
+    assert cat == "alimentari"
+    b = await db.list_budget()
+    assert b == [{"categoria": "alimentari", "importo": 300}]
+
+
+async def test_set_budget_upsert(db):
+    await db.set_budget("alimentari", 300)
+    await db.set_budget("alimentari", 250)
+    b = await db.list_budget()
+    assert len(b) == 1
+    assert b[0]["importo"] == 250
+
+
+async def test_set_budget_importo_assoluto(db):
+    await db.set_budget("svago", -50)
+    assert (await db.list_budget())[0]["importo"] == 50
+
+
+async def test_delete_budget(db):
+    await db.set_budget("svago", 100)
+    assert await db.delete_budget("Svago") is True
+    assert await db.list_budget() == []
+    assert await db.delete_budget("svago") is False
+
+
+async def test_get_budget_status_speso_e_residuo(db):
+    await db.set_budget("alimentari", 300)
+    await db.add_transazione("contanti", "2026-06-05", -120, "alimentari", "spesa")
+    await db.add_transazione("postepay", "2026-06-20", -80, "alimentari", "spesa2")
+    # entrata e altra categoria non contano
+    await db.add_transazione("contanti", "2026-06-10", 500, "stipendio", "")
+    await db.add_transazione("contanti", "2026-06-10", -40, "svago", "cinema")
+
+    st = await db.get_budget_status(2026, 6)
+    assert len(st) == 1
+    s = st[0]
+    assert s["categoria"] == "alimentari"
+    assert s["budget"] == 300
+    assert s["speso"] == 200
+    assert s["residuo"] == 100
+    assert s["perc"] == 66.7
+    assert s["sforato"] is False
+
+
+async def test_get_budget_status_sforamento(db):
+    await db.set_budget("ristoranti", 100)
+    await db.add_transazione("postepay", "2026-06-05", -150, "ristoranti", "cena")
+    st = await db.get_budget_status(2026, 6)
+    assert st[0]["sforato"] is True
+    assert st[0]["residuo"] == -50
+    assert st[0]["perc"] == 150.0
+
+
+async def test_get_budget_status_filtra_mese(db):
+    await db.set_budget("alimentari", 300)
+    await db.add_transazione("contanti", "2026-05-31", -100, "alimentari", "maggio")
+    await db.add_transazione("contanti", "2026-06-01", -50, "alimentari", "giugno")
+    st = await db.get_budget_status(2026, 6)
+    assert st[0]["speso"] == 50
+
+
+async def test_get_budget_status_nessun_budget(db):
+    assert await db.get_budget_status(2026, 6) == []
+
+
+async def test_get_budget_status_ordine_perc_desc(db):
+    await db.set_budget("alimentari", 300)
+    await db.set_budget("ristoranti", 100)
+    await db.add_transazione("contanti", "2026-06-01", -60, "alimentari", "")   # 20%
+    await db.add_transazione("contanti", "2026-06-01", -90, "ristoranti", "")   # 90%
+    st = await db.get_budget_status(2026, 6)
+    assert [s["categoria"] for s in st] == ["ristoranti", "alimentari"]
