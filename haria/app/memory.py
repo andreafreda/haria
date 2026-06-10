@@ -1671,6 +1671,37 @@ async def merge_categoria(src: str, dst: str) -> bool:
         return True
 
 
+async def reset_economia(reset_categorie: bool = False,
+                         reset_saldi: bool = False) -> dict:
+    """Reset dati economia (fine test). Svuota sempre le transazioni.
+    Opzionale: ripristina categorie al seed, azzera i saldi iniziali.
+    Ritorna il conteggio di cio' che e' stato cancellato."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT count(*) FROM econ_transazioni")
+        n_tx = (await cur.fetchone())[0]
+        await db.execute("DELETE FROM econ_transazioni")
+        n_cat = 0
+        if reset_categorie:
+            cur = await db.execute("SELECT count(*) FROM econ_categorie")
+            n_cat = (await cur.fetchone())[0]
+            await db.execute("DELETE FROM econ_categorie")
+            for cat in econ_def.CATEGORIE_DEFAULT:
+                await db.execute(
+                    "INSERT OR IGNORE INTO econ_categorie (nome) VALUES (?)", (cat,)
+                )
+        n_saldi = 0
+        if reset_saldi:
+            cur = await db.execute(
+                "SELECT count(*) FROM econ_conti WHERE saldo_iniziale != 0"
+            )
+            n_saldi = (await cur.fetchone())[0]
+            await db.execute("UPDATE econ_conti SET saldo_iniziale = 0")
+        await db.commit()
+    return {"transazioni_cancellate": n_tx,
+            "categorie_resettate": n_cat,
+            "saldi_azzerati": n_saldi}
+
+
 async def get_saldi() -> list[dict]:
     """Saldo di tutti i conti attivi: [{conto, tipo, saldo}]."""
     async with aiosqlite.connect(DB_PATH) as db:

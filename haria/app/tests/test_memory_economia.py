@@ -234,3 +234,39 @@ async def test_merge_categoria_dst_creata(db):
 
 async def test_merge_categoria_su_se_stessa(db):
     assert await db.merge_categoria("alimentari", "alimentari") is False
+
+
+# ---- reset ----
+
+async def test_reset_economia_solo_transazioni(db):
+    await db.add_transazione("contanti", "2026-06-01", -10, "alimentari", "x")
+    await db.add_transazione("postepay", "2026-06-02", -5, "svago", "y")
+    res = await db.reset_economia()
+    assert res["transazioni_cancellate"] == 2
+    assert res["categorie_resettate"] == 0
+    assert res["saldi_azzerati"] == 0
+    assert await db.get_saldo("contanti") == 0
+    # categorie restano
+    assert "alimentari" in await db.list_categorie()
+
+
+async def test_reset_economia_categorie(db):
+    await db.normalize_categoria("categoria_custom")
+    assert "categoria_custom" in await db.list_categorie()
+    res = await db.reset_economia(reset_categorie=True)
+    assert res["categorie_resettate"] > 0
+    cats = await db.list_categorie()
+    assert "categoria_custom" not in cats
+    assert set(econ_def.CATEGORIE_DEFAULT) == set(cats)
+
+
+async def test_reset_economia_saldi(db):
+    await db.add_conto("revolut", "carta", saldo_iniziale=100)
+    res = await db.reset_economia(reset_saldi=True)
+    assert res["saldi_azzerati"] == 1
+    assert (await db.get_conto("revolut"))["saldo_iniziale"] == 0
+
+
+async def test_reset_economia_vuoto(db):
+    res = await db.reset_economia()
+    assert res["transazioni_cancellate"] == 0

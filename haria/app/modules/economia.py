@@ -15,6 +15,7 @@ import memory
 from memory import (
     add_transazione, get_saldo, get_saldi, riepilogo_spese,
     normalize_categoria, list_categorie, rename_categoria, merge_categoria,
+    reset_economia,
 )
 
 NAME = "economia"
@@ -95,6 +96,24 @@ TOOLS = [
             "required": ["azione"],
         },
     },
+    {
+        "name": "reset_economia",
+        "description": (
+            "Azzera i dati del modulo economia. Operazione DISTRUTTIVA e "
+            "irreversibile: cancella tutte le transazioni registrate. Usa solo se "
+            "l'utente chiede esplicitamente di ripulire/azzerare i dati (es. fine "
+            "fase di test). Senza confirm=true non cancella nulla, mostra solo cosa "
+            "verrebbe rimosso e chiede conferma."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "confirm": {"type": "boolean", "description": "Metti true SOLO dopo conferma esplicita dell'utente. Default false = anteprima."},
+                "reset_categorie": {"type": "boolean", "description": "Se true ripristina le categorie al set di default. Default false."},
+                "reset_saldi": {"type": "boolean", "description": "Se true azzera i saldi iniziali dei conti. Default false."},
+            },
+        },
+    },
 ]
 
 PROMPT = ""
@@ -114,7 +133,30 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         return await _riepilogo_spese(inputs)
     if name == "gestisci_categorie":
         return await _gestisci_categorie(inputs)
+    if name == "reset_economia":
+        return await _reset_economia(inputs)
     return f"Tool sconosciuto nel modulo {NAME}: {name}"
+
+
+async def _reset_economia(inputs: dict) -> str:
+    reset_categorie = bool(inputs.get("reset_categorie", False))
+    reset_saldi = bool(inputs.get("reset_saldi", False))
+    if not inputs.get("confirm", False):
+        # anteprima: mostra i saldi attuali senza cancellare nulla
+        saldi = await get_saldi()
+        return json.dumps({
+            "ok": False,
+            "conferma_richiesta": True,
+            "msg": ("Operazione DISTRUTTIVA: cancella tutte le transazioni"
+                    + (", ripristina le categorie di default" if reset_categorie else "")
+                    + (", azzera i saldi iniziali" if reset_saldi else "")
+                    + ". Mostra all'utente cosa verrà rimosso e chiedi conferma "
+                      "esplicita; poi richiama reset_economia con confirm=true."),
+            "saldi_attuali": saldi,
+        }, ensure_ascii=False)
+    res = await reset_economia(reset_categorie=reset_categorie, reset_saldi=reset_saldi)
+    res["ok"] = True
+    return json.dumps(res, ensure_ascii=False)
 
 
 async def _gestisci_categorie(inputs: dict) -> str:

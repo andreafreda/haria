@@ -76,6 +76,7 @@ def _wire(monkeypatch, db):
     monkeypatch.setattr(economia, "list_categorie", db.list_categorie)
     monkeypatch.setattr(economia, "rename_categoria", db.rename_categoria)
     monkeypatch.setattr(economia, "merge_categoria", db.merge_categoria)
+    monkeypatch.setattr(economia, "reset_economia", db.reset_economia)
 
 
 async def test_get_saldo_conto_singolo(db, monkeypatch):
@@ -169,6 +170,27 @@ async def test_gestisci_categorie_azione_invalida(db, monkeypatch):
     _wire(monkeypatch, db)
     out = await economia.handle("gestisci_categorie", {"azione": "boh"}, "u1")
     assert "Azione non valida" in out
+
+
+async def test_reset_economia_anteprima_senza_confirm(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.add_transazione("contanti", "2026-06-01", -10, "alimentari", "x")
+    out = await economia.handle("reset_economia", {}, "u1")
+    data = json.loads(out)
+    assert data["ok"] is False
+    assert data["conferma_richiesta"] is True
+    # nulla cancellato
+    assert await db.get_saldo("contanti") == -10
+
+
+async def test_reset_economia_confirm(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.add_transazione("contanti", "2026-06-01", -10, "alimentari", "x")
+    out = await economia.handle("reset_economia", {"confirm": True}, "u1")
+    data = json.loads(out)
+    assert data["ok"] is True
+    assert data["transazioni_cancellate"] == 1
+    assert await db.get_saldo("contanti") == 0
 
 
 async def test_dynamic_prompt_include_categorie(db):
