@@ -8,7 +8,7 @@ notizie personalizzati**, e mantiene una **memoria a lungo termine** per ogni ut
 
 Nome = acronimo **H**ome **A**ssistant **R**eactive **I**ntelligent **A**gent. Si pronuncia "Aria".
 
-Repo: https://github.com/andreafreda/haria — versione corrente: **v0.1.79**.
+Repo: https://github.com/andreafreda/haria — versione corrente: **v0.1.83**.
 
 ---
 
@@ -192,6 +192,16 @@ euro di frutta", "35 di benzina con la postepay"). Sorgente di verità = tabelle
 - **Dedup categorie a 2 livelli**: proattivo (`dynamic_prompt` espone le categorie
   esistenti → Claude le riusa invece di inventarne di simili) + reattivo (merge via
   `gestisci_categorie unisci`). Match case-insensitive in `normalize_categoria`.
+- **Budget per categoria** (`econ_budget`): `set_budget` (importo 0 = rimuove),
+  `get_budget_status` → speso vs budget del mese, residuo, %, flag sforato.
+- **Salvadanai / obiettivi** (`econ_obiettivi`): `set_obiettivo` (target + scadenza
+  opz.), `accantona` (versa/ritira, update atomico SQL, floor 0), `get_obiettivi` →
+  residuo, %, mesi rimanenti, **quota mensile suggerita** = residuo / mesi rimanenti.
+- **`reset_economia`** — azzera dati economici (transazioni + budget + obiettivi;
+  opz. categorie→seed, saldi→0). DISTRUTTIVO con confirm gate (anteprima senza confirm).
+- **Dashboard MQTT** (`mqtt_pub.publish_economia`, device "HARIA Economia"): sensori
+  saldo per conto + saldo totale + spese del mese (breakdown attr) + stato budget
+  + progress salvadanai. Refresh dopo ogni mutazione (`request_economia_refresh`).
 
 ### `web_search` — ricerca web
 `search_web` via DuckDuckGo (`ddgs`) per informazioni in tempo reale.
@@ -270,6 +280,9 @@ membro della famiglia.
 | `get_saldo` | economia | Saldo di un conto o totale |
 | `riepilogo_spese` | economia | Entrate/uscite/netto + spese per categoria su periodo |
 | `gestisci_categorie` | economia | Lista/rinomina/unisci categorie |
+| `set_budget` / `get_budget_status` | economia | Budget mensile per categoria + stato speso/residuo |
+| `set_obiettivo` / `accantona` / `get_obiettivi` | economia | Salvadanai: target, versamenti, quota mensile |
+| `reset_economia` | economia | Azzera dati economici (confirm gate) |
 | `search_web` | web_search | Ricerca web |
 | `create_briefing` / `list_briefings` / `update_briefing` / `delete_briefing` | news | Briefing notizie ricorrente (temi + cron, whitelist per-tema) |
 | `block_news_source` / `unblock_news_source` / `list_news_sources` | news | Blacklist globale fonti notizie |
@@ -302,6 +315,8 @@ SQLite (`aiosqlite`) in `/config/haria.db`, schema gestito in `memory.py:init_db
 | `econ_conti` | Conti economia (registry `econ_def`, seedati) |
 | `econ_transazioni` | Movimenti spese/entrate (importo firmato) |
 | `econ_categorie` | Categorie spesa/entrata (seed + custom) |
+| `econ_budget` | Budget mensile per categoria |
+| `econ_obiettivi` | Salvadanai / obiettivi di risparmio |
 
 ---
 
@@ -386,10 +401,12 @@ La versione è in `haria/config.yaml` (`version:`), va bumpata a ogni release.
 - Test automatici: `pytest` + `pytest-asyncio` su `app/tests/` (memory/moduli logici);
   resto coperto da `py_compile`.
 
-**Modulo `economia`** (sviluppo incrementale — vedi `docs/economia-domestica-analisi.md`)
-- ✅ Conti + transazioni + categorie, inserimento/query/riepilogo via chat, dedup categorie.
-- ⏳ Budget per categoria, salvadanai/obiettivi, dashboard MQTT, import CSV BancoPosta/
-  Postepay, integrazione PayPal, report mensili proattivi.
+**Modulo `economia`** (sviluppo incrementale — vedi `docs/economia-domestica-analisi.md`
+e stato dettagliato in `docs/economia-stato.md`)
+- ✅ Kata 1-7: conti + transazioni + categorie (dedup), query/riepilogo, budget per
+  categoria, salvadanai/obiettivi, dashboard MQTT. + reset distruttivo.
+- ⏳ Kata 8-12: promemoria export Poste, import CSV BancoPosta/Postepay, integrazione
+  PayPal (OAuth2), report mensili proattivi, hardening.
 
 **Piattaforma**
 - `ha_chat` → conversation agent nativo HA (Assist pipeline).
