@@ -77,6 +77,22 @@ async def test_publish_economia_budget(db, monkeypatch):
     assert "homeassistant/sensor/haria_econ_budget_alimentari/config" in fake.published
 
 
+async def test_publish_economia_obiettivi(db, monkeypatch):
+    fake = await _setup(monkeypatch)
+    await db.set_obiettivo("vacanze", 1000)
+    await db.accantona("vacanze", 250)
+
+    await mqtt_pub.publish_economia()
+
+    assert _decode(fake, "haria/economia/obiettivo/vacanze/state") == 25.0
+    attr = _decode(fake, "haria/economia/obiettivo/vacanze/attr")
+    assert attr["target"] == 1000
+    assert attr["accantonato"] == 250
+    assert attr["residuo"] == 750
+    assert attr["raggiunto"] is False
+    assert "homeassistant/sensor/haria_econ_obiettivo_vacanze/config" in fake.published
+
+
 async def test_publish_economia_disabled_noop(db, monkeypatch):
     fake = _FakeClient()
     monkeypatch.setattr(mqtt_pub, "_enabled", False)

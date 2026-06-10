@@ -355,3 +355,97 @@ async def test_get_budget_status_ordine_perc_desc(db):
     await db.add_transazione("contanti", "2026-06-01", -90, "ristoranti", "")   # 90%
     st = await db.get_budget_status(2026, 6)
     assert [s["categoria"] for s in st] == ["ristoranti", "alimentari"]
+
+
+# ---- obiettivi / salvadanai ----
+
+async def test_set_obiettivo_e_get(db):
+    await db.set_obiettivo("vacanze", 1000)
+    obs = await db.get_obiettivi()
+    assert len(obs) == 1
+    o = obs[0]
+    assert o["nome"] == "vacanze"
+    assert o["target"] == 1000
+    assert o["accantonato"] == 0
+    assert o["residuo"] == 1000
+    assert o["perc"] == 0.0
+    assert o["raggiunto"] is False
+    assert o["quota_mensile"] is None  # nessuna scadenza
+
+
+async def test_set_obiettivo_upsert_non_tocca_accantonato(db):
+    await db.set_obiettivo("auto", 5000)
+    await db.accantona("auto", 1000)
+    await db.set_obiettivo("auto", 6000)  # aggiorna target
+    o = (await db.get_obiettivi())[0]
+    assert o["target"] == 6000
+    assert o["accantonato"] == 1000
+
+
+async def test_accantona_incrementa_e_sottrae(db):
+    await db.set_obiettivo("vacanze", 1000)
+    r = await db.accantona("Vacanze", 200)
+    assert r["accantonato"] == 200
+    r = await db.accantona("vacanze", 50)
+    assert r["accantonato"] == 250
+    # ritiro
+    r = await db.accantona("vacanze", -100)
+    assert r["accantonato"] == 150
+
+
+async def test_accantona_non_sotto_zero(db):
+    await db.set_obiettivo("vacanze", 1000)
+    await db.accantona("vacanze", 50)
+    r = await db.accantona("vacanze", -200)
+    assert r["accantonato"] == 0
+
+
+async def test_accantona_inesistente(db):
+    assert await db.accantona("nonesiste", 100) is None
+
+
+async def test_obiettivo_raggiunto(db):
+    await db.set_obiettivo("regalo", 100)
+    r = await db.accantona("regalo", 100)
+    assert r["raggiunto"] is True
+    o = (await db.get_obiettivi())[0]
+    assert o["residuo"] == 0
+    assert o["perc"] == 100.0
+    assert o["quota_mensile"] == 0.0
+
+
+async def test_quota_mensile_con_scadenza(db):
+    from datetime import date
+    # scadenza ~3 mesi avanti
+    oggi = date.today()
+    m = oggi.month + 3
+    y = oggi.year + (m - 1) // 12
+    m = (m - 1) % 12 + 1
+    scad = date(y, m, oggi.day).isoformat()
+    await db.set_obiettivo("vacanze", 1000, scad)
+    await db.accantona("vacanze", 100)
+    o = (await db.get_obiettivi())[0]
+    assert o["mesi_rimanenti"] == 3
+    assert o["quota_mensile"] == 300.0  # (1000-100)/3
+
+
+async def test_quota_mensile_scaduto(db):
+    await db.set_obiettivo("vacanze", 1000, "2020-01-01")
+    await db.accantona("vacanze", 100)
+    o = (await db.get_obiettivi())[0]
+    assert o["mesi_rimanenti"] == 0
+    assert o["quota_mensile"] == 900.0  # serve tutto subito
+
+
+async def test_delete_obiettivo(db):
+    await db.set_obiettivo("x", 100)
+    assert await db.delete_obiettivo("X") is True
+    assert await db.get_obiettivi() == []
+    assert await db.delete_obiettivo("x") is False
+
+
+async def test_reset_cancella_obiettivi(db):
+    await db.set_obiettivo("x", 100)
+    res = await db.reset_economia()
+    assert res["obiettivi_cancellati"] == 1
+    assert await db.get_obiettivi() == []

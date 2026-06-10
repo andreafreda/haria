@@ -18,6 +18,7 @@ from memory import (
     normalize_categoria, list_categorie, rename_categoria, merge_categoria,
     reset_economia,
     set_budget, delete_budget, list_budget, get_budget_status,
+    set_obiettivo, accantona, delete_obiettivo, get_obiettivi,
 )
 
 NAME = "economia"
@@ -133,6 +134,49 @@ TOOLS = [
         },
     },
     {
+        "name": "set_obiettivo",
+        "description": (
+            "Crea o aggiorna un salvadanaio / obiettivo di risparmio (es. 'voglio "
+            "mettere da parte 1000 euro per le vacanze entro agosto'). Definisce "
+            "l'importo target e una scadenza opzionale. Non modifica quanto già "
+            "accantonato. Per versare usa accantona."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nome": {"type": "string", "description": "Nome obiettivo (es. 'vacanze', 'auto nuova')"},
+                "target": {"type": "number", "description": "Importo da raggiungere in €"},
+                "scadenza": {"type": "string", "description": "Data obiettivo YYYY-MM-DD (opzionale)"},
+            },
+            "required": ["nome", "target"],
+        },
+    },
+    {
+        "name": "accantona",
+        "description": (
+            "Versa (o ritira con importo negativo) denaro in un salvadanaio esistente "
+            "(es. 'ho messo 50 euro nelle vacanze'). Aggiorna quanto accantonato."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nome": {"type": "string", "description": "Nome obiettivo"},
+                "importo": {"type": "number", "description": "Importo da versare (negativo per ritirare)"},
+            },
+            "required": ["nome", "importo"],
+        },
+    },
+    {
+        "name": "get_obiettivi",
+        "description": (
+            "Mostra i salvadanai/obiettivi di risparmio: quanto accantonato vs target, "
+            "percentuale, residuo, mesi rimanenti e quota mensile suggerita per "
+            "arrivare in tempo. Usa quando l'utente chiede a che punto sono i risparmi "
+            "('quanto manca per le vacanze?', 'come vanno i salvadanai?')."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "reset_economia",
         "description": (
             "Azzera i dati del modulo economia. Operazione DISTRUTTIVA e "
@@ -175,7 +219,60 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         return await _set_budget(inputs)
     if name == "get_budget_status":
         return await _get_budget_status(inputs)
+    if name == "set_obiettivo":
+        return await _set_obiettivo(inputs)
+    if name == "accantona":
+        return await _accantona(inputs)
+    if name == "get_obiettivi":
+        return await _get_obiettivi(inputs)
     return f"Tool sconosciuto nel modulo {NAME}: {name}"
+
+
+async def _set_obiettivo(inputs: dict) -> str:
+    nome = (inputs.get("nome") or "").strip()
+    if not nome:
+        return "Nome obiettivo mancante."
+    try:
+        target = float(inputs["target"])
+    except (KeyError, ValueError, TypeError):
+        return "Target mancante o non valido."
+    if target <= 0:
+        return "Il target deve essere positivo."
+    scadenza = (inputs.get("scadenza") or "").strip() or None
+    if scadenza:
+        try:
+            date.fromisoformat(scadenza)
+        except ValueError:
+            return "Scadenza non valida (usa YYYY-MM-DD)."
+    await set_obiettivo(nome, target, scadenza)
+    mqtt_pub.request_economia_refresh()
+    return json.dumps({"ok": True, "nome": nome, "target": round(target, 2),
+                       "scadenza": scadenza}, ensure_ascii=False)
+
+
+async def _accantona(inputs: dict) -> str:
+    nome = (inputs.get("nome") or "").strip()
+    if not nome:
+        return "Nome obiettivo mancante."
+    try:
+        importo = float(inputs["importo"])
+    except (KeyError, ValueError, TypeError):
+        return "Importo mancante o non valido."
+    res = await accantona(nome, importo)
+    if res is None:
+        return f"Obiettivo '{nome}' non trovato. Crealo prima con set_obiettivo."
+    mqtt_pub.request_economia_refresh()
+    res["ok"] = True
+    return json.dumps(res, ensure_ascii=False)
+
+
+async def _get_obiettivi(inputs: dict) -> str:
+    obs = await get_obiettivi()
+    if not obs:
+        return json.dumps({"ok": True, "nessun_obiettivo": True,
+                           "msg": "Nessun salvadanaio. Creane uno con set_obiettivo."},
+                          ensure_ascii=False)
+    return json.dumps({"ok": True, "obiettivi": obs}, ensure_ascii=False)
 
 
 async def _set_budget(inputs: dict) -> str:

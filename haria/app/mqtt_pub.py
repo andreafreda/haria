@@ -24,7 +24,7 @@ from memory import (
     get_meal_plan, get_meals, get_shopping_list, get_shopping_cost, get_profile,
     get_pantry, get_pantry_expiring, get_weight_stats,
     get_bolletta_csv, get_bolletta_years,
-    get_saldi, get_budget_status, riepilogo_spese,
+    get_saldi, get_budget_status, riepilogo_spese, get_obiettivi,
 )
 
 logger = logging.getLogger(__name__)
@@ -472,6 +472,26 @@ async def publish_economia():
         _pub(f"{topic}/attr", {
             "budget": b["budget"], "speso": b["speso"],
             "residuo": b["residuo"], "sforato": b["sforato"],
+        })
+
+    # --- salvadanai / obiettivi di risparmio (progress) ---
+    for o in await get_obiettivi():
+        slug = _slug(o["nome"])
+        topic = f"{_BASE_ECON}/obiettivo/{slug}"
+        _disc_sensor(
+            f"haria_econ_obiettivo_{slug}", f"Obiettivo {o['nome']}",
+            f"{topic}/state", "%",
+            icon="mdi:piggy-bank", device=_DEVICE_ECON,
+            json_attr_topic=f"{topic}/attr",
+            object_id=f"economia_obiettivo_{slug}",
+        )
+        _pub(f"{topic}/state", o["perc"])
+        _pub(f"{topic}/attr", {
+            "target": o["target"], "accantonato": o["accantonato"],
+            "residuo": o["residuo"], "scadenza": o["target_date"] or "",
+            "mesi_rimanenti": o["mesi_rimanenti"] if o["mesi_rimanenti"] is not None else "",
+            "quota_mensile": o["quota_mensile"] if o["quota_mensile"] is not None else "",
+            "raggiunto": o["raggiunto"],
         })
 
 

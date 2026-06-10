@@ -199,6 +199,14 @@ async def init_db():
                 importo REAL NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS econ_obiettivi (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL UNIQUE,
+                target REAL NOT NULL,
+                accantonato REAL NOT NULL DEFAULT 0,
+                target_date TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         # seed conti default da econ_def.CONTI (idempotente)
         for nome, d in econ_def.CONTI.items():
@@ -1744,6 +1752,102 @@ async def get_budget_status(year: int, month: int) -> list[dict]:
     return out
 
 
+def _mesi_rimanenti(target_date: str, today: date) -> int:
+    """Mesi interi rimanenti fino a target_date. 0 se scaduto/oggi."""
+    try:
+        d = date.fromisoformat(target_date)
+    except (ValueError, TypeError):
+        return 0
+    if d <= today:
+        return 0
+    months = (d.year - today.year) * 12 + (d.month - today.month)
+    if d.day < today.day:
+        months -= 1
+    return max(months, 1)
+
+
+async def set_obiettivo(nome: str, target: float, target_date: str | None = None) -> int:
+    """Crea o aggiorna (target/scadenza) un obiettivo di risparmio. Non tocca
+    l'accantonato esistente. Ritorna l'id."""
+    nome = (nome or "").strip()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO econ_obiettivi (nome, target, target_date)
+               VALUES (?, ?, ?)
+               ON CONFLICT(nome) DO UPDATE SET
+                   target=excluded.target, target_date=excluded.target_date""",
+            (nome, abs(float(target)), target_date or None),
+        )
+        await db.commit()
+        cur = await db.execute("SELECT id FROM econ_obiettivi WHERE nome=?", (nome,))
+        return (await cur.fetchone())[0]
+
+
+async def accantona(nome: str, importo: float) -> dict | None:
+    """Aggiunge (o sottrae se importo<0) all'accantonato di un obiettivo.
+    accantonato non scende sotto 0. None se l'obiettivo non esiste."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # update atomico SQL-side (no read-modify-write), floored a 0
+        cur = await db.execute(
+            """UPDATE econ_obiettivi
+               SET accantonato = max(0, round(accantonato + ?, 2))
+               WHERE lower(nome)=lower(?)""",
+            (float(importo), (nome or "").strip()),
+        )
+        if cur.rowcount == 0:
+            return None
+        await db.commit()
+        cur = await db.execute(
+            "SELECT nome, accantonato, target FROM econ_obiettivi WHERE lower(nome)=lower(?)",
+            ((nome or "").strip(),),
+        )
+        nome_db, nuovo, target = await cur.fetchone()
+    return {"nome": nome_db, "accantonato": nuovo, "target": target,
+            "raggiunto": nuovo >= target}
+
+
+async def delete_obiettivo(nome: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM econ_obiettivi WHERE lower(nome)=lower(?)", ((nome or "").strip(),)
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def get_obiettivi() -> list[dict]:
+    """Obiettivi con campi calcolati: residuo, perc, mesi_rimanenti,
+    quota_mensile suggerita = residuo / mesi_rimanenti."""
+    today = date.today()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT nome, target, accantonato, target_date FROM econ_obiettivi ORDER BY nome"
+        )
+        rows = await cur.fetchall()
+    out = []
+    for nome, target, acc, tdate in rows:
+        target = float(target)
+        acc = round(float(acc), 2)
+        residuo = round(max(target - acc, 0.0), 2)
+        perc = round(acc / target * 100, 1) if target else 0.0
+        mesi = _mesi_rimanenti(tdate, today) if tdate else None
+        if residuo <= 0:
+            quota = 0.0
+        elif mesi is None:
+            quota = None
+        elif mesi <= 0:
+            quota = residuo  # scaduto: serve tutto subito
+        else:
+            quota = round(residuo / mesi, 2)
+        out.append({
+            "nome": nome, "target": target, "accantonato": acc,
+            "residuo": residuo, "perc": perc, "target_date": tdate,
+            "mesi_rimanenti": mesi, "quota_mensile": quota,
+            "raggiunto": acc >= target,
+        })
+    return out
+
+
 async def reset_economia(reset_categorie: bool = False,
                          reset_saldi: bool = False) -> dict:
     """Reset dati economia (fine test). Svuota sempre transazioni e budget.
@@ -1756,6 +1860,9 @@ async def reset_economia(reset_categorie: bool = False,
         cur = await db.execute("SELECT count(*) FROM econ_budget")
         n_budget = (await cur.fetchone())[0]
         await db.execute("DELETE FROM econ_budget")
+        cur = await db.execute("SELECT count(*) FROM econ_obiettivi")
+        n_obiettivi = (await cur.fetchone())[0]
+        await db.execute("DELETE FROM econ_obiettivi")
         n_cat = 0
         if reset_categorie:
             cur = await db.execute("SELECT count(*) FROM econ_categorie")
@@ -1775,6 +1882,7 @@ async def reset_economia(reset_categorie: bool = False,
         await db.commit()
     return {"transazioni_cancellate": n_tx,
             "budget_cancellati": n_budget,
+            "obiettivi_cancellati": n_obiettivi,
             "categorie_resettate": n_cat,
             "saldi_azzerati": n_saldi}
 

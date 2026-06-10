@@ -81,6 +81,10 @@ def _wire(monkeypatch, db):
     monkeypatch.setattr(economia, "delete_budget", db.delete_budget)
     monkeypatch.setattr(economia, "list_budget", db.list_budget)
     monkeypatch.setattr(economia, "get_budget_status", db.get_budget_status)
+    monkeypatch.setattr(economia, "set_obiettivo", db.set_obiettivo)
+    monkeypatch.setattr(economia, "accantona", db.accantona)
+    monkeypatch.setattr(economia, "delete_obiettivo", db.delete_obiettivo)
+    monkeypatch.setattr(economia, "get_obiettivi", db.get_obiettivi)
 
 
 async def test_get_saldo_conto_singolo(db, monkeypatch):
@@ -245,6 +249,57 @@ async def test_get_budget_status_tool_mese_invalido(db, monkeypatch):
     _wire(monkeypatch, db)
     out = await economia.handle("get_budget_status", {"mese": 13}, "u1")
     assert "Mese non valido" in out
+
+
+async def test_set_obiettivo_tool(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("set_obiettivo", {"nome": "vacanze", "target": 1000}, "u1")
+    data = json.loads(out)
+    assert data["ok"] is True
+    assert data["nome"] == "vacanze"
+    assert data["target"] == 1000
+
+
+async def test_set_obiettivo_tool_target_invalido(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("set_obiettivo", {"nome": "x", "target": 0}, "u1")
+    assert "positivo" in out
+
+
+async def test_set_obiettivo_tool_scadenza_invalida(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("set_obiettivo", {"nome": "x", "target": 100, "scadenza": "31-12-2026"}, "u1")
+    assert "Scadenza non valida" in out
+
+
+async def test_accantona_tool(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.set_obiettivo("vacanze", 1000)
+    out = await economia.handle("accantona", {"nome": "vacanze", "importo": 200}, "u1")
+    data = json.loads(out)
+    assert data["accantonato"] == 200
+
+
+async def test_accantona_tool_inesistente(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("accantona", {"nome": "boh", "importo": 50}, "u1")
+    assert "non trovato" in out
+
+
+async def test_get_obiettivi_tool_vuoto(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("get_obiettivi", {}, "u1")
+    data = json.loads(out)
+    assert data.get("nessun_obiettivo") is True
+
+
+async def test_get_obiettivi_tool(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.set_obiettivo("vacanze", 1000)
+    await db.accantona("vacanze", 250)
+    out = await economia.handle("get_obiettivi", {}, "u1")
+    data = json.loads(out)
+    assert data["obiettivi"][0]["perc"] == 25.0
 
 
 async def test_dynamic_prompt_include_categorie(db):
