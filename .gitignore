@@ -7,3 +7,12 @@ __pycache__/
 *.pyo
 .env
 .claude/settings.local.json
+
+# HA token per estrazione clima (mai committare)
+tools/ha_token.txt
+climate*.csv
+
+# DB temporanei / locali (mai committare)
+*tmp.db
+*.db
+.pytest_cache/

@@ -9,6 +9,8 @@ import aiosqlite
 import os
 from datetime import date, timedelta
 
+import econ_def
+
 DB_PATH = os.environ.get("DB_PATH", "/config/haria.db")
 MAX_HISTORY = 10          # turni raw inviati a ogni richiesta
 SUMMARY_BATCH = 20        # turni vecchi piegati nel summary per giro
@@ -168,7 +170,42 @@ async def init_db():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (utility, metric, year, month)
             );
+            CREATE TABLE IF NOT EXISTS econ_conti (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL UNIQUE,
+                tipo TEXT NOT NULL,
+                saldo_iniziale REAL NOT NULL DEFAULT 0,
+                attivo INTEGER NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS econ_transazioni (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conto_id INTEGER NOT NULL REFERENCES econ_conti(id),
+                data TEXT NOT NULL,
+                importo REAL NOT NULL,
+                categoria TEXT NOT NULL,
+                descrizione TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_econ_transazioni_conto_id
+                ON econ_transazioni(conto_id);
+            CREATE TABLE IF NOT EXISTS econ_categorie (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
+        # seed conti default da econ_def.CONTI (idempotente)
+        for nome, d in econ_def.CONTI.items():
+            await db.execute(
+                "INSERT OR IGNORE INTO econ_conti (nome, tipo) VALUES (?, ?)",
+                (nome, d["tipo"]),
+            )
+        # seed categorie default (idempotente)
+        for cat in econ_def.CATEGORIE_DEFAULT:
+            await db.execute(
+                "INSERT OR IGNORE INTO econ_categorie (nome) VALUES (?)", (cat,)
+            )
         # migrazione: i briefing/blocklist creati dalla chat web avevano user_id
         # 'ha_chat_<chatid>' (non consegnabile via Telegram, int() crasha). Normalizza
         # al chat_id numerico così coincide con Telegram e col pannello web.
@@ -1428,3 +1465,264 @@ async def seed_bollette(rows: list[tuple]):
             rows,
         )
         await db.commit()
+
+
+# ---- Economia domestica (conti, transazioni) ------------------------------
+
+async def list_conti(solo_attivi: bool = True) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        sql = "SELECT id, nome, tipo, saldo_iniziale, attivo FROM econ_conti"
+        if solo_attivi:
+            sql += " WHERE attivo=1"
+        sql += " ORDER BY id"
+        cursor = await db.execute(sql)
+        rows = await cursor.fetchall()
+    return [
+        {"id": r[0], "nome": r[1], "tipo": r[2], "saldo_iniziale": r[3], "attivo": bool(r[4])}
+        for r in rows
+    ]
+
+
+async def get_conto(nome: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, nome, tipo, saldo_iniziale, attivo FROM econ_conti WHERE nome=?",
+            (nome,),
+        )
+        r = await cursor.fetchone()
+    if not r:
+        return None
+    return {"id": r[0], "nome": r[1], "tipo": r[2], "saldo_iniziale": r[3], "attivo": bool(r[4])}
+
+
+async def add_conto(nome: str, tipo: str, saldo_iniziale: float = 0.0) -> int:
+    """Crea (o riattiva) un conto custom, oltre a quelli seedati da econ_def."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO econ_conti (nome, tipo, saldo_iniziale, attivo)
+               VALUES (?, ?, ?, 1)
+               ON CONFLICT(nome) DO UPDATE SET
+                   tipo=excluded.tipo, saldo_iniziale=excluded.saldo_iniziale, attivo=1""",
+            (nome, tipo, float(saldo_iniziale)),
+        )
+        await db.commit()
+        cursor = await db.execute("SELECT id FROM econ_conti WHERE nome=?", (nome,))
+        return (await cursor.fetchone())[0]
+
+
+async def add_transazione(conto: str, data: str, importo: float,
+                           categoria: str, descrizione: str = "") -> int:
+    """Registra movimento. importo firmato: + entrata, - uscita."""
+    conto_row = await get_conto(conto)
+    if conto_row is None:
+        raise ValueError(f"conto sconosciuto: {conto}")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """INSERT INTO econ_transazioni (conto_id, data, importo, categoria, descrizione)
+               VALUES (?, ?, ?, ?, ?)""",
+            (conto_row["id"], data, float(importo), categoria, descrizione),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_saldo(conto: str) -> float:
+    """Saldo = saldo_iniziale + somma transazioni."""
+    conto_row = await get_conto(conto)
+    if conto_row is None:
+        raise ValueError(f"conto sconosciuto: {conto}")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(importo), 0) FROM econ_transazioni WHERE conto_id=?",
+            (conto_row["id"],),
+        )
+        somma = (await cursor.fetchone())[0]
+    return round(conto_row["saldo_iniziale"] + somma, 2)
+
+
+async def list_transazioni(conto: str | None = None, data_da: str | None = None,
+                            data_a: str | None = None, categoria: str | None = None,
+                            limit: int = 100) -> list[dict]:
+    sql = """SELECT t.id, c.nome, t.data, t.importo, t.categoria, t.descrizione
+             FROM econ_transazioni t JOIN econ_conti c ON c.id = t.conto_id
+             WHERE 1=1"""
+    params: list = []
+    if conto:
+        sql += " AND c.nome=?"
+        params.append(conto)
+    if data_da:
+        sql += " AND t.data>=?"
+        params.append(data_da)
+    if data_a:
+        sql += " AND t.data<=?"
+        params.append(data_a)
+    if categoria:
+        sql += " AND t.categoria=?"
+        params.append(categoria)
+    sql += " ORDER BY t.data DESC, t.id DESC LIMIT ?"
+    params.append(int(limit))
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(sql, params)
+        rows = await cursor.fetchall()
+    return [
+        {"id": r[0], "conto": r[1], "data": r[2], "importo": r[3], "categoria": r[4], "descrizione": r[5]}
+        for r in rows
+    ]
+
+
+async def delete_transazione(transazione_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM econ_transazioni WHERE id=?", (transazione_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def list_categorie() -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT nome FROM econ_categorie ORDER BY nome")
+        return [r[0] for r in await cursor.fetchall()]
+
+
+async def normalize_categoria(nome: str) -> str:
+    """Ritorna la categoria canonica. Match case-insensitive su quelle esistenti;
+    se nuova, la registra (forma trimmed/lowercase) e la ritorna."""
+    raw = (nome or "").strip()
+    if not raw:
+        raw = "varie"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (raw,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return row[0]
+        canon = raw.lower()
+        await db.execute(
+            "INSERT OR IGNORE INTO econ_categorie (nome) VALUES (?)", (canon,)
+        )
+        await db.commit()
+        # re-select: ritorna la forma effettivamente memorizzata (robusto se una
+        # variante e' stata creata in mezzo)
+        cursor = await db.execute(
+            "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (canon,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else canon
+
+
+async def rename_categoria(old: str, new: str) -> bool:
+    """Rinomina categoria + propaga su tutte le transazioni. False se 'old' assente."""
+    new = (new or "").strip().lower()
+    if not new:
+        return False
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (old,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False
+        old_canon = row[0]
+        # se 'new' esiste gia' -> equivale a un merge
+        cursor = await db.execute(
+            "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (new,)
+        )
+        exists = await cursor.fetchone()
+        await db.execute(
+            "UPDATE econ_transazioni SET categoria=? WHERE categoria=?", (new, old_canon)
+        )
+        if exists:
+            await db.execute("DELETE FROM econ_categorie WHERE nome=?", (old_canon,))
+        else:
+            await db.execute(
+                "UPDATE econ_categorie SET nome=? WHERE nome=?", (new, old_canon)
+            )
+        await db.commit()
+        return True
+
+
+async def merge_categoria(src: str, dst: str) -> bool:
+    """Sposta tutte le transazioni da 'src' a 'dst' e cancella 'src'.
+    False se src assente. 'dst' viene creata se non esiste."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (src,)
+        )
+        srow = await cursor.fetchone()
+        if not srow:
+            return False
+        src_canon = srow[0]
+        dst_canon = (dst or "").strip().lower()
+        if not dst_canon or dst_canon == src_canon.lower():
+            return False
+        await db.execute(
+            "INSERT OR IGNORE INTO econ_categorie (nome) VALUES (?)", (dst_canon,)
+        )
+        # usa la forma canonica gia' registrata per dst
+        cursor = await db.execute(
+            "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (dst_canon,)
+        )
+        dst_canon = (await cursor.fetchone())[0]
+        await db.execute(
+            "UPDATE econ_transazioni SET categoria=? WHERE categoria=?", (dst_canon, src_canon)
+        )
+        await db.execute("DELETE FROM econ_categorie WHERE nome=?", (src_canon,))
+        await db.commit()
+        return True
+
+
+async def get_saldi() -> list[dict]:
+    """Saldo di tutti i conti attivi: [{conto, tipo, saldo}]."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """SELECT c.nome, c.tipo,
+                      c.saldo_iniziale + COALESCE(SUM(t.importo), 0)
+               FROM econ_conti c
+               LEFT JOIN econ_transazioni t ON t.conto_id = c.id
+               WHERE c.attivo = 1
+               GROUP BY c.id
+               ORDER BY c.id"""
+        )
+        rows = await cursor.fetchall()
+    return [{"conto": r[0], "tipo": r[1], "saldo": round(r[2], 2)} for r in rows]
+
+
+async def riepilogo_spese(data_da: str | None = None, data_a: str | None = None,
+                          conto: str | None = None) -> dict:
+    """Aggrega movimenti nel periodo: totale entrate/uscite/netto + breakdown
+    spese per categoria (solo importi negativi)."""
+    where = "WHERE 1=1"
+    params: list = []
+    if conto:
+        where += " AND c.nome=?"
+        params.append(conto)
+    if data_da:
+        where += " AND t.data>=?"
+        params.append(data_da)
+    if data_a:
+        where += " AND t.data<=?"
+        params.append(data_a)
+    base = f"FROM econ_transazioni t JOIN econ_conti c ON c.id = t.conto_id {where}"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            f"""SELECT
+                  COALESCE(SUM(CASE WHEN t.importo > 0 THEN t.importo END), 0),
+                  COALESCE(SUM(CASE WHEN t.importo < 0 THEN t.importo END), 0)
+                {base}""",
+            params,
+        )
+        entrate, uscite = await cur.fetchone()
+        entrate, uscite = float(entrate), float(uscite)
+        cur = await db.execute(
+            f"""SELECT t.categoria, SUM(t.importo) tot
+                {base} AND t.importo < 0
+                GROUP BY t.categoria ORDER BY tot ASC""",
+            params,
+        )
+        cats = [{"categoria": r[0], "totale": round(r[1], 2)} for r in await cur.fetchall()]
+    return {
+        "entrate": round(entrate, 2),
+        "uscite": round(uscite, 2),
+        "netto": round(entrate + uscite, 2),
+        "per_categoria": cats,
+    }
