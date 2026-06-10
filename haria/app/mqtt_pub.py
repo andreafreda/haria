@@ -24,6 +24,7 @@ from memory import (
     get_meal_plan, get_meals, get_shopping_list, get_shopping_cost, get_profile,
     get_pantry, get_pantry_expiring, get_weight_stats,
     get_bolletta_csv, get_bolletta_years,
+    get_saldi, get_budget_status, riepilogo_spese,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,17 @@ _DEVICE_BOLL = {
     "name": "HARIA Bollette",
     "manufacturer": "HARIA",
     "model": "bollette",
+}
+
+# --- Economia (device separato) ---
+from econ_def import CONTI as _ECON_CONTI
+
+_BASE_ECON = "haria/economia"          # prefisso state topic economia
+_DEVICE_ECON = {
+    "identifiers": ["haria_economia"],
+    "name": "HARIA Economia",
+    "manufacturer": "HARIA",
+    "model": "economia",
 }
 
 
@@ -118,6 +130,7 @@ async def start():
         await publish_discovery()
         await refresh()
         await publish_bollette()
+        await publish_economia()
     except Exception as e:
         logger.warning("Pubblicazione iniziale MQTT fallita: %s", e)
 
@@ -387,6 +400,91 @@ async def publish_bollette():
                     object_id=f"bollette_{util}_{metric}_{year}",
                 )
                 _pub(topic, await get_bolletta_csv(util, metric, year))
+
+
+def _month_bounds():
+    """(primo_giorno, ultimo_giorno, anno, mese) del mese corrente, ISO."""
+    today = date.today()
+    first = today.replace(day=1)
+    nxt = first.replace(year=first.year + 1, month=1) if first.month == 12 \
+        else first.replace(month=first.month + 1)
+    last = nxt - timedelta(days=1)
+    return first.isoformat(), last.isoformat(), today.year, today.month
+
+
+async def publish_economia():
+    """Discovery + stato economia (device 'HARIA Economia').
+
+    Sensori: saldo per conto + saldo totale; spese del mese (con breakdown
+    per categoria); stato budget del mese per categoria con tetto impostato."""
+    if not _enabled:
+        return
+    # --- saldi conti ---
+    saldi = await get_saldi()
+    totale = 0.0
+    for s in saldi:
+        slug = _slug(s["conto"])
+        label = _ECON_CONTI.get(s["conto"], {}).get("label", s["conto"].capitalize())
+        icon = _ECON_CONTI.get(s["conto"], {}).get("icon", "mdi:wallet")
+        topic = f"{_BASE_ECON}/saldo/{slug}"
+        _disc_sensor(
+            f"haria_econ_saldo_{slug}", f"Saldo {label}", topic, "€",
+            icon=icon, device=_DEVICE_ECON, state_class="measurement",
+            object_id=f"economia_saldo_{slug}",
+        )
+        _pub(topic, s["saldo"])
+        totale += s["saldo"]
+    _disc_sensor(
+        "haria_econ_saldo_totale", "Saldo totale", f"{_BASE_ECON}/saldo_totale", "€",
+        icon="mdi:cash-multiple", device=_DEVICE_ECON, state_class="measurement",
+        object_id="economia_saldo_totale",
+    )
+    _pub(f"{_BASE_ECON}/saldo_totale", round(totale, 2))
+
+    # --- spese del mese (totale uscite + breakdown per categoria) ---
+    first, last, year, month = _month_bounds()
+    rep = await riepilogo_spese(data_da=first, data_a=last)
+    _disc_sensor(
+        "haria_econ_spese_mese", "Spese mese", f"{_BASE_ECON}/spese_mese/state", "€",
+        icon="mdi:cart-arrow-down", device=_DEVICE_ECON,
+        json_attr_topic=f"{_BASE_ECON}/spese_mese/attr",
+        object_id="economia_spese_mese",
+    )
+    # uscite e' negativo -> mostra valore assoluto speso
+    _pub(f"{_BASE_ECON}/spese_mese/state", round(-rep["uscite"], 2))
+    _pub(f"{_BASE_ECON}/spese_mese/attr", {
+        "entrate": rep["entrate"], "uscite": rep["uscite"], "netto": rep["netto"],
+        "per_categoria": {c["categoria"]: c["totale"] for c in rep["per_categoria"]},
+    })
+
+    # --- budget del mese per categoria ---
+    for b in await get_budget_status(year, month):
+        slug = _slug(b["categoria"])
+        topic = f"{_BASE_ECON}/budget/{slug}"
+        _disc_sensor(
+            f"haria_econ_budget_{slug}", f"Budget {b['categoria']}",
+            f"{topic}/state", "%",
+            icon="mdi:gauge", device=_DEVICE_ECON,
+            json_attr_topic=f"{topic}/attr",
+            object_id=f"economia_budget_{slug}",
+        )
+        _pub(f"{topic}/state", b["perc"])
+        _pub(f"{topic}/attr", {
+            "budget": b["budget"], "speso": b["speso"],
+            "residuo": b["residuo"], "sforato": b["sforato"],
+        })
+
+
+def request_economia_refresh():
+    """Trigger non bloccante di publish_economia (dopo mutazioni economia)."""
+    if not _enabled:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("request_economia_refresh: nessun event loop attivo, skip")
+        return
+    loop.create_task(publish_economia())
 
 
 def request_refresh():

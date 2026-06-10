@@ -12,6 +12,7 @@ from datetime import date
 import econ_def
 from econ_def import norm_conto
 import memory
+import mqtt_pub
 from memory import (
     add_transazione, get_saldo, get_saldi, riepilogo_spese,
     normalize_categoria, list_categorie, rename_categoria, merge_categoria,
@@ -187,9 +188,11 @@ async def _set_budget(inputs: dict) -> str:
         return "Importo mancante o non valido."
     if importo <= 0:
         ok = await delete_budget(categoria)
+        mqtt_pub.request_economia_refresh()
         return json.dumps({"ok": True, "azione": "rimosso", "categoria": categoria.lower(),
                            "trovato": ok}, ensure_ascii=False)
     cat = await set_budget(categoria, importo)
+    mqtt_pub.request_economia_refresh()
     return json.dumps({"ok": True, "azione": "impostato", "categoria": cat,
                        "budget": round(importo, 2)}, ensure_ascii=False)
 
@@ -229,6 +232,7 @@ async def _reset_economia(inputs: dict) -> str:
             "saldi_attuali": saldi,
         }, ensure_ascii=False)
     res = await reset_economia(reset_categorie=reset_categorie, reset_saldi=reset_saldi)
+    mqtt_pub.request_economia_refresh()
     res["ok"] = True
     return json.dumps(res, ensure_ascii=False)
 
@@ -317,6 +321,7 @@ async def _add_transazione(inputs: dict) -> str:
 
     importo_firmato = importo if tipo == "entrata" else -importo
     await add_transazione(conto, data, importo_firmato, categoria, descrizione)
+    mqtt_pub.request_economia_refresh()
     saldo = await get_saldo(conto)
 
     return json.dumps({
