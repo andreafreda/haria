@@ -2,13 +2,13 @@
 
 Addon Home Assistant: assistente AI personale basato su Claude (Anthropic),
 accessibile via **Telegram** e via **pannello web ingress** in HA. Controlla la
-casa, gestisce agenda/promemoria, diario alimentare famigliare, bollette, ricerca
-web, **briefing notizie personalizzati**, e mantiene una **memoria a lungo termine**
-per ogni utente.
+casa, gestisce agenda/promemoria, diario alimentare famigliare, bollette,
+**gestione economica domestica** (spese/entrate/conti), ricerca web, **briefing
+notizie personalizzati**, e mantiene una **memoria a lungo termine** per ogni utente.
 
 Nome = acronimo **H**ome **A**ssistant **R**eactive **I**ntelligent **A**gent. Si pronuncia "Aria".
 
-Repo: https://github.com/andreafreda/haria — versione corrente: **v0.1.50**.
+Repo: https://github.com/andreafreda/haria — versione corrente: **v0.1.79**.
 
 ---
 
@@ -177,6 +177,22 @@ prima di sovrascrivere (`confirm=true`).
 > (sono specifici della propria installazione/dashboard Consumi): vanno creati lato HA e
 > possono essere personalizzati a piacimento (nomi entità/script, struttura CSV).
 
+### `economia` — gestione economica domestica
+Tracciamento spese/entrate famigliari via chat in linguaggio naturale ("ho speso 20
+euro di frutta", "35 di benzina con la postepay"). Sorgente di verità = tabelle
+`econ_conti`/`econ_transazioni`/`econ_categorie` in SQLite.
+- **Conti** definiti in `econ_def.CONTI` (registry estendibile): bancoposta, postepay,
+  paypal, contanti. Saldo = `saldo_iniziale + Σ transazioni`. Default conto = `contanti`.
+- **`add_transazione`** — registra spesa/entrata (importo firmato), su un conto, con
+  categoria + descrizione. Categoria **normalizzata** anti-doppioni.
+- **`get_saldo`** — saldo di un conto o totale di tutti.
+- **`riepilogo_spese`** — entrate/uscite/netto + breakdown per categoria su un periodo.
+- **`gestisci_categorie`** — `lista`/`rinomina`/`unisci`. Categorie seedate da
+  `econ_def.CATEGORIE_DEFAULT`, personalizzabili dall'utente via chat.
+- **Dedup categorie a 2 livelli**: proattivo (`dynamic_prompt` espone le categorie
+  esistenti → Claude le riusa invece di inventarne di simili) + reattivo (merge via
+  `gestisci_categorie unisci`). Match case-insensitive in `normalize_categoria`.
+
 ### `web_search` — ricerca web
 `search_web` via DuckDuckGo (`ddgs`) per informazioni in tempo reale.
 
@@ -250,6 +266,10 @@ membro della famiglia.
 | `update_pantry_item` | food_diary | Dispensa |
 | `save_diet` / `delete_diet` | food_diary | Diete da PDF |
 | `update_bill` | bollette | Consumi/costi utenze da PDF |
+| `add_transazione` | economia | Registra spesa/entrata su un conto (categoria normalizzata) |
+| `get_saldo` | economia | Saldo di un conto o totale |
+| `riepilogo_spese` | economia | Entrate/uscite/netto + spese per categoria su periodo |
+| `gestisci_categorie` | economia | Lista/rinomina/unisci categorie |
 | `search_web` | web_search | Ricerca web |
 | `create_briefing` / `list_briefings` / `update_briefing` / `delete_briefing` | news | Briefing notizie ricorrente (temi + cron, whitelist per-tema) |
 | `block_news_source` / `unblock_news_source` / `list_news_sources` | news | Blacklist globale fonti notizie |
@@ -278,6 +298,10 @@ SQLite (`aiosqlite`) in `/config/haria.db`, schema gestito in `memory.py:init_db
 | `shopping_items` | Lista spesa (con prezzo) |
 | `pantry_items` | Dispensa/scorte |
 | `food_cache` | Cache valori nutrizionali OFF/USDA |
+| `bollette` | Consumi/costi utenze per mese |
+| `econ_conti` | Conti economia (registry `econ_def`, seedati) |
+| `econ_transazioni` | Movimenti spese/entrate (importo firmato) |
+| `econ_categorie` | Categorie spesa/entrata (seed + custom) |
 
 ---
 
@@ -308,6 +332,7 @@ modules:
   multi_user: true
   bollette: true
   news: true
+  economia: true
 
 users:
   - name: "Andrea"
@@ -358,11 +383,16 @@ La versione è in `haria/config.yaml` (`version:`), va bumpata a ogni release.
 
 **Sicurezza / robustezza**
 - Allowlist `control_device` (oggi Claude può chiamare qualsiasi servizio HA).
-- Test automatici (oggi solo `py_compile`).
+- Test automatici: `pytest` + `pytest-asyncio` su `app/tests/` (memory/moduli logici);
+  resto coperto da `py_compile`.
+
+**Modulo `economia`** (sviluppo incrementale — vedi `docs/economia-domestica-analisi.md`)
+- ✅ Conti + transazioni + categorie, inserimento/query/riepilogo via chat, dedup categorie.
+- ⏳ Budget per categoria, salvadanai/obiettivi, dashboard MQTT, import CSV BancoPosta/
+  Postepay, integrazione PayPal, report mensili proattivi.
 
 **Piattaforma**
 - `ha_chat` → conversation agent nativo HA (Assist pipeline).
-- Modulo `home_economics` (spese/budget/entrate, ricorrenti, report) — ponte con `food_diary`/`bollette`.
 - Integrazione email (Gmail), reply vocale TTS su Telegram.
 - Pubblicazione HACS (`hacs.json`, metadati).
 - Companion app Android (progetto a sé).
