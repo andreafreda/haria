@@ -155,6 +155,7 @@ def parse(rows: list[list]) -> dict:
 
     movimenti = []
     scartate = 0
+    seen_keys: dict[str, int] = {}
     for row in rows[h + 1:]:
         if not row or all((c is None or str(c).strip() == "") for c in row):
             continue
@@ -177,12 +178,21 @@ def parse(rows: list[list]) -> dict:
             continue
         importo = round(importo, 2)
         categoria = categorize(desc, importo)
+        # dedup: due righe REALI identiche nello stesso file devono avere hash
+        # diversi (altrimenti la 2a sparisce in import_transazioni). La 1a
+        # occorrenza usa l'hash storico (no suffisso) per retrocompatibilità
+        # col DB; le successive aggiungono |n.
+        key = f"{conto}|{data}|{importo:.2f}|{_norm(desc)}"
+        n = seen_keys.get(key, 0)
+        seen_keys[key] = n + 1
+        h_row = (row_hash(conto, data, importo, desc) if n == 0
+                 else hashlib.sha1(f"{key}|{n}".encode("utf-8")).hexdigest())
         movimenti.append({
             "data": data,
             "importo": importo,
             "descrizione": desc,
             "categoria": categoria,
-            "hash": row_hash(conto, data, importo, desc),
+            "hash": h_row,
         })
     return {"formato": fmt, "conto": conto, "movimenti": movimenti, "scartate": scartate}
 

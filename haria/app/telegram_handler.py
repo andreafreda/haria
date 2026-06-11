@@ -152,6 +152,7 @@ async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = _load_users()
 
     if chat_id not in users:
+        await update.message.reply_text("Non sei autorizzato a usare HARIA.")
         return
 
     groq_key = cfg.get("groq_key", "")
@@ -190,6 +191,7 @@ async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     users = _load_users()
     if chat_id not in users:
+        await update.message.reply_text("Non sei autorizzato a usare HARIA.")
         return
     import base64
     photo = update.message.photo[-1]  # risoluzione massima
@@ -221,6 +223,7 @@ async def _handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     users = _load_users()
     if chat_id not in users:
+        await update.message.reply_text("Non sei autorizzato a usare HARIA.")
         return
     doc = update.message.document
     mime = (doc.mime_type or "").lower()

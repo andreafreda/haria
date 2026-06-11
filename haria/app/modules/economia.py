@@ -40,6 +40,29 @@ def _membro_from_user(user_id: str) -> str:
                 return nome
     return econ_def.MEMBRI[0] if econ_def.MEMBRI else "famiglia"
 
+
+async def _resolve_conto(conto_raw: str, membro: str) -> str | None:
+    """Risolve un conto: prima dal registry statico (norm_conto), poi fallback
+    sul DB (conti custom creati a runtime via gestisci_conti)."""
+    conto = norm_conto(conto_raw, membro)
+    if conto is None:
+        row = await memory.get_conto((conto_raw or "").strip().lower())
+        if row is not None:
+            conto = row["nome"]
+    return conto
+
+
+def _valida_data(s: str) -> str | None:
+    """Valida una data ISO YYYY-MM-DD. Ritorna la stringa se valida, None se no."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        date.fromisoformat(s)
+        return s
+    except ValueError:
+        return None
+
 _CONTI_DESC = ", ".join(econ_def.CONTI.keys())
 
 TOOLS = [
@@ -366,7 +389,7 @@ async def _gestisci_transazioni(inputs: dict, user_id: str = "") -> str:
     azione = (inputs.get("azione") or "").strip().lower()
     membro = _membro_from_user(user_id)
     if azione == "lista":
-        conto = norm_conto(inputs["conto"], membro) if inputs.get("conto") else None
+        conto = await _resolve_conto(inputs["conto"], membro) if inputs.get("conto") else None
         righe = await list_transazioni(
             conto=conto,
             data_da=(inputs.get("data_da") or None),
@@ -384,12 +407,16 @@ async def _gestisci_transazioni(inputs: dict, user_id: str = "") -> str:
         return json.dumps({"ok": ok, "azione": "elimina", "id": tid}, ensure_ascii=False)
     if azione == "modifica":
         kw = {}
-        if inputs.get("data"): kw["data"] = inputs["data"].strip()
+        if inputs.get("data"):
+            d = _valida_data(inputs["data"])
+            if d is None:
+                return "Data non valida: usa il formato YYYY-MM-DD."
+            kw["data"] = d
         if inputs.get("importo") is not None: kw["importo"] = float(inputs["importo"])
         if inputs.get("categoria"): kw["categoria"] = await normalize_categoria(inputs["categoria"])
         if inputs.get("descrizione") is not None: kw["descrizione"] = inputs["descrizione"].strip()
         if inputs.get("conto"):
-            c = norm_conto(inputs["conto"], membro)
+            c = await _resolve_conto(inputs["conto"], membro)
             if c is None:
                 return f"Conto '{inputs['conto']}' non riconosciuto."
             kw["conto"] = c
@@ -508,12 +535,14 @@ async def _reset_economia(inputs: dict) -> str:
         return json.dumps({
             "ok": False,
             "conferma_richiesta": True,
-            "msg": ("Operazione DISTRUTTIVA: cancella tutte le transazioni"
+            "msg": ("Operazione DISTRUTTIVA: cancella tutte le transazioni, "
+                    "tutti i budget e tutti i salvadanai/obiettivi"
                     + (", ripristina le categorie di default" if reset_categorie else "")
                     + (", azzera i saldi iniziali" if reset_saldi else "")
                     + ". Mostra all'utente cosa verrà rimosso e chiedi conferma "
                       "esplicita; poi richiama reset_economia con confirm=true."),
             "saldi_attuali": saldi,
+            "obiettivi_attuali": await get_obiettivi(),
         }, ensure_ascii=False)
     res = await reset_economia(reset_categorie=reset_categorie, reset_saldi=reset_saldi)
     mqtt_pub.request_economia_refresh()
@@ -566,7 +595,7 @@ async def _get_saldo(inputs: dict, user_id: str = "") -> str:
     membro = _membro_from_user(user_id)
     conto_raw = (inputs.get("conto") or "").strip()
     if conto_raw:
-        conto = norm_conto(conto_raw, membro)
+        conto = await _resolve_conto(conto_raw, membro)
         if conto is None:
             return f"Conto '{conto_raw}' non riconosciuto. Conti disponibili: {_CONTI_DESC}."
         saldo = await get_saldo(conto)
@@ -585,7 +614,7 @@ async def _riepilogo_spese(inputs: dict, user_id: str = "") -> str:
     conto_raw = (inputs.get("conto") or "").strip()
     conto = None
     if conto_raw:
-        conto = norm_conto(conto_raw, membro)
+        conto = await _resolve_conto(conto_raw, membro)
         if conto is None:
             return f"Conto '{conto_raw}' non riconosciuto. Conti disponibili: {_CONTI_DESC}."
     intest = (inputs.get("intestatario") or "").strip().lower() or None
@@ -622,11 +651,17 @@ async def _add_transazione(inputs: dict, user_id: str = "") -> str:
 
     conto_raw = (inputs.get("conto") or "").strip()
     # default: contanti del membro che scrive; altrimenti risolvi col contesto membro
-    conto = norm_conto(conto_raw, membro) if conto_raw else econ_def.conto_per("contanti", membro)
+    conto = await _resolve_conto(conto_raw, membro) if conto_raw else econ_def.conto_per("contanti", membro)
     if conto is None:
         return f"Conto '{conto_raw}' non riconosciuto. Conti disponibili: {_CONTI_DESC}."
 
-    data = (inputs.get("data") or "").strip() or date.today().isoformat()
+    data_raw = (inputs.get("data") or "").strip()
+    if data_raw:
+        data = _valida_data(data_raw)
+        if data is None:
+            return "Data non valida: usa il formato YYYY-MM-DD."
+    else:
+        data = date.today().isoformat()
 
     # normalizza categoria: riusa una canonica esistente (case-insensitive),
     # altrimenti la registra. Evita doppioni tipo "Cibo"/"cibo"/"alimentari".

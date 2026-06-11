@@ -338,6 +338,13 @@ async def chat(user_id: str, user_text: str, user_config: dict,
                             "content": result,
                         })
 
+            # respond chiamato insieme ad altri tool: gli altri tool sono stati
+            # eseguiti (side effect reali) ma il modello non ne ha i risultati.
+            # Ignora il respond prematuro e continua il loop coi tool_results,
+            # così il modello richiama respond al giro dopo con i risultati.
+            if reply is not None and tool_results:
+                reply = None
+
             if reply is not None:
                 await save_turn(user_id, "assistant", reply)
                 return reply

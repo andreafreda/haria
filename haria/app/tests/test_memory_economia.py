@@ -595,3 +595,29 @@ async def test_delete_categoria_in_uso(db):
 async def test_delete_categoria_inesistente(db):
     res = await db.delete_categoria("boh")
     assert res["trovato"] is False
+
+
+# ---- bugfix review 2026-06-11 ----
+
+async def test_update_conto_rename_collisione(db):
+    # TASK 17: rename su nome esistente -> False, niente crash
+    await db.add_conto("a_conto", "carta")
+    await db.add_conto("b_conto", "carta")
+    assert await db.update_conto("a_conto", nuovo_nome="b_conto") is False
+    assert await db.get_conto("a_conto") is not None  # invariato
+
+
+async def test_set_bolletta_range_conserva_totale(db):
+    # TASK 16: somma dei mesi == total (no perdita centesimi)
+    await db.set_bolletta_range("corrente", "costo", 2026, 1, 3, 100.0)
+    csv = await db.get_bolletta_csv("corrente", "costo", 2026)
+    vals = [float(x) for x in csv.split(",")]
+    assert round(sum(vals), 2) == 100.0
+
+
+async def test_migrazione_conti_generici_una_tantum(db):
+    # TASK 2: un conto 'paypal' creato dall'utente non viene ri-disattivato
+    await db.add_conto("paypal", "wallet")
+    assert (await db.get_conto("paypal"))["attivo"] is True
+    await db.init_db()  # secondo avvio
+    assert (await db.get_conto("paypal"))["attivo"] is True

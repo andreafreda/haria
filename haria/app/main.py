@@ -91,9 +91,13 @@ async def _release_bot(token: str):
         logger.info("Nessun webhook precedente — bot lasciato libero.")
         return
     try:
-        secret = _previous_webhook.get("secret_token")
-        await _set_webhook(token, prev_url, secret)
-        logger.info("Webhook HA ripristinato: %s", prev_url)
+        # NB: getWebhookInfo di Telegram non espone secret_token, quindi il
+        # webhook viene ripristinato SENZA secret. Se l'integrazione HA ne usava
+        # uno, va riconfigurato a mano (non recuperabile via API).
+        await _set_webhook(token, prev_url, None)
+        logger.warning("Webhook HA ripristinato SENZA secret_token (Telegram non "
+                       "lo espone): se l'integrazione HA usava un secret, "
+                       "riconfigurala.")
     except Exception as e:
         logger.warning("Impossibile ripristinare webhook HA: %s", e)
 
@@ -122,8 +126,9 @@ async def main():
     notifier.set_bot(app.bot)
 
     mods = cfg.get("modules", {})
-    if (mods.get("agenda", False)
-            or mods.get("food_diary", False) or mods.get("news", False)):
+    if (mods.get("agenda", False) or mods.get("food_diary", False)
+            or mods.get("news", False) or mods.get("bollette", False)
+            or mods.get("economia", False)):
         await scheduler.start(app.bot)
     if mods.get("food_diary", False):
         scheduler.schedule_food_jobs(app.bot)
@@ -136,11 +141,15 @@ async def main():
                 logger.info("Bollette: seed iniziale da HA (%d mesi importati).", n)
         except Exception as e:
             logger.warning("Bollette seed fallito: %s", e)
-    # MQTT serve a food_diary e/o bollette
-    if mods.get("food_diary", False) or mods.get("bollette", False):
+    # MQTT serve a food_diary, bollette ed economia
+    if (mods.get("food_diary", False) or mods.get("bollette", False)
+            or mods.get("economia", False)):
         await mqtt_pub.start()
     if mods.get("food_diary", False):
         scheduler.schedule_mqtt_refresh()
+    # refresh notturno economia/bollette (cavallo del mese)
+    if mods.get("economia", False) or mods.get("bollette", False):
+        scheduler.schedule_econ_refresh()
     if mods.get("news", False):
         await scheduler.load_briefings()
 

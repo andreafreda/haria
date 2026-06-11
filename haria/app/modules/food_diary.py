@@ -821,8 +821,14 @@ def _maybe_refresh_mqtt(name: str):
 
 
 async def handle(name: str, inputs: dict, user_id: str) -> str:
-    member = _norm(inputs.get("member"))
+    # refresh MQTT DOPO la mutazione (prima leggeva stato pre-commit -> sensori stale)
+    result = await _handle_inner(name, inputs, user_id)
     _maybe_refresh_mqtt(name)
+    return result
+
+
+async def _handle_inner(name: str, inputs: dict, user_id: str) -> str:
+    member = _norm(inputs.get("member"))
 
     if name == "set_diet_profile":
         if not member:

@@ -118,7 +118,9 @@ async def start():
             c.username_pw_set(conf.get("username"), conf.get("password"))
         if conf.get("ssl"):
             c.tls_set()
-        c.connect(conf["host"], int(conf.get("port", 1883)), keepalive=60)
+        # connect e' I/O sincrono: in thread per non bloccare l'event loop
+        # (broker lento/irraggiungibile renderebbe HARIA muto su Telegram)
+        await asyncio.to_thread(c.connect, conf["host"], int(conf.get("port", 1883)), 60)
         c.loop_start()
         _client = c
         _enabled = True
@@ -541,37 +543,36 @@ async def publish_economia():
         })
 
 
-def request_economia_refresh():
-    """Trigger non bloccante di publish_economia (dopo mutazioni economia)."""
+_bg_tasks: set = set()
+
+
+def _spawn(coro):
+    """Lancia una coroutine in background tenendo il riferimento al task
+    (altrimenti il GC puo' cancellarlo a meta' — pitfall asyncio)."""
     if not _enabled:
+        coro.close()
         return
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        logger.debug("request_economia_refresh: nessun event loop attivo, skip")
+        logger.debug("spawn: nessun event loop attivo, skip")
+        coro.close()
         return
-    loop.create_task(publish_economia())
+    t = loop.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
+
+def request_economia_refresh():
+    """Trigger non bloccante di publish_economia (dopo mutazioni economia)."""
+    _spawn(publish_economia())
 
 
 def request_refresh():
     """Trigger non bloccante di un refresh (da chiamare dopo mutazioni)."""
-    if not _enabled:
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        logger.debug("request_refresh: nessun event loop attivo, skip")
-        return
-    loop.create_task(refresh())
+    _spawn(refresh())
 
 
 def request_bollette_refresh():
     """Trigger non bloccante di publish_bollette (dopo update_bill)."""
-    if not _enabled:
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        logger.debug("request_bollette_refresh: nessun event loop attivo, skip")
-        return
-    loop.create_task(publish_bollette())
+    _spawn(publish_bollette())

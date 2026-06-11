@@ -19,7 +19,15 @@ _FTS_OK = False           # FTS5 disponibile (settato in init_db)
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # WAL + busy_timeout: riduce 'database is locked' con accessi concorrenti
+        # (webpanel + Telegram + scheduler + refresh MQTT). WAL e' persistente.
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                id TEXT PRIMARY KEY,
+                applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
@@ -222,11 +230,20 @@ async def init_db():
                 "INSERT OR IGNORE INTO econ_conti (nome, tipo, intestatario) VALUES (?, ?, ?)",
                 (nome, d["tipo"], d.get("intestatario", "famiglia")),
             )
-        # migrazione profilazione: disattiva i conti generici pre-profilazione
-        # (sostituiti dalle varianti per membro). Dati test, non distruttivo.
-        await db.execute(
-            "UPDATE econ_conti SET attivo=0 WHERE nome IN ('postepay','paypal','contanti')"
+        # migrazione profilazione (UNA-TANTUM): disattiva i conti generici
+        # pre-profilazione (sostituiti dalle varianti per membro). Wrappata in
+        # schema_migrations così non ri-disattiva un conto che l'utente potrebbe
+        # ricreare con quel nome a un riavvio successivo.
+        cur = await db.execute(
+            "SELECT 1 FROM schema_migrations WHERE id='deactivate_generic_conti'"
         )
+        if (await cur.fetchone()) is None:
+            await db.execute(
+                "UPDATE econ_conti SET attivo=0 WHERE nome IN ('postepay','paypal','contanti')"
+            )
+            await db.execute(
+                "INSERT INTO schema_migrations (id) VALUES ('deactivate_generic_conti')"
+            )
         # seed categorie default (idempotente)
         for cat in econ_def.CATEGORIE_DEFAULT:
             await db.execute(
@@ -332,7 +349,7 @@ async def get_history(user_id: str) -> list[dict]:
         cursor = await db.execute(
             """SELECT role, content FROM conversations
                WHERE user_id = ?
-               ORDER BY timestamp DESC LIMIT ?""",
+               ORDER BY id DESC LIMIT ?""",
             (user_id, MAX_HISTORY),
         )
         rows = await cursor.fetchall()
@@ -1420,14 +1437,17 @@ async def set_bolletta_range(utility: str, metric: str, year: int,
         m_end = m_start
     n = m_end - m_start + 1
     per = round(float(total) / n, 1)
+    # l'ultimo mese assorbe il resto: la somma dei mesi == total (no perdita centesimi)
+    last_val = round(float(total) - per * (n - 1), 1)
     async with aiosqlite.connect(DB_PATH) as db:
         for mth in range(m_start, m_end + 1):
+            value = last_val if mth == m_end else per
             await db.execute(
                 """INSERT INTO bollette (utility, metric, year, month, value, updated_at)
                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                    ON CONFLICT(utility, metric, year, month)
                    DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP""",
-                (utility, metric, int(year), mth, per),
+                (utility, metric, int(year), mth, value),
             )
         await db.commit()
 
@@ -1561,9 +1581,13 @@ async def update_conto(nome: str, *, nuovo_nome: str | None = None,
         return False
     params.append(nome)
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            f"UPDATE econ_conti SET {', '.join(sets)} WHERE nome=?", params
-        )
+        try:
+            cur = await db.execute(
+                f"UPDATE econ_conti SET {', '.join(sets)} WHERE nome=?", params
+            )
+        except aiosqlite.IntegrityError:
+            # nuovo_nome collide con un conto esistente (UNIQUE)
+            return False
         await db.commit()
         return cur.rowcount > 0
 

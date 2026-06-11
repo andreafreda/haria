@@ -185,9 +185,15 @@ async def _h_home(request):
     return _page("Home", body)
 
 
+def _it_num(v: float, dec: int = 2) -> str:
+    """Formato numerico italiano: 1.234,56 (punto migliaia, virgola decimali)."""
+    s = f"{v:,.{dec}f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def _eur(v) -> str:
     cls = "pos" if v >= 0 else "neg"
-    return f"<span class='{cls}'>€{v:,.2f}</span>"
+    return f"<span class='{cls}'>€{_it_num(v)}</span>"
 
 
 _MESI_IT = ["", "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
@@ -309,7 +315,7 @@ async def _h_economia(request):
     body += f"<div class='k'><div class='v'>{_eur(rep['entrate'])}</div><div class='l'>Entrate</div></div>"
     body += f"<div class='k'><div class='v'>{_eur(rep['netto'])}</div><div class='l'>Netto</div></div>"
     if tot_budget:
-        body += (f"<div class='k'><div class='v'>€{tot_budget_speso:,.0f}/{tot_budget:,.0f}</div>"
+        body += (f"<div class='k'><div class='v'>€{_it_num(tot_budget_speso,0)}/{_it_num(tot_budget,0)}</div>"
                  f"<div class='l'>Budget usato</div></div>")
     body += "</div>"
 
@@ -811,6 +817,9 @@ async def _h_briefings_save(request):
         return web.json_response({"error": "Indica almeno un tema"}, status=400)
     if not cron:
         return web.json_response({"error": "Indica il cron"}, status=400)
+    if not scheduler.is_running():
+        return web.json_response({"error": "Scheduler non attivo: abilita almeno un "
+                                 "modulo tra agenda/food_diary/news"}, status=503)
     try:
         num_news = max(1, min(20, int(data.get("num_news") or 5)))
     except (TypeError, ValueError):
@@ -926,8 +935,14 @@ async def _h_logs_clear(request):
 async def _h_export(request):
     end = date.today()
     start = end - timedelta(days=30)
-    df = request.query.get("from") or start.isoformat()
-    dt = request.query.get("to") or end.isoformat()
+    try:
+        df = date.fromisoformat(request.query.get("from", "")).isoformat()
+    except ValueError:
+        df = start.isoformat()
+    try:
+        dt = date.fromisoformat(request.query.get("to", "")).isoformat()
+    except ValueError:
+        dt = end.isoformat()
     rows = await export_meals(df, dt)
     buf = io.StringIO()
     w = csv.writer(buf)

@@ -131,3 +131,28 @@ async def test_import_registra_categorie(db):
     await db.import_transazioni("bancoposta", res["movimenti"])
     cats = await db.list_categorie()
     assert "prelievo contanti" in cats
+
+
+# TASK 4: due righe identiche nello stesso file -> hash diversi, non si perdono
+_PP_DUP = [
+    ["Data Contabile", "Data Valuta", "Importo (euro)", "Descrizione operazioni"],
+    ["10/06/2026", "10/06/2026", "-1,00", "CAFFE BAR"],
+    ["10/06/2026", "10/06/2026", "-1,00", "CAFFE BAR"],
+]
+
+
+def test_parse_righe_identiche_hash_diversi():
+    res = econ_import.parse(_PP_DUP)
+    assert len(res["movimenti"]) == 2
+    h0, h1 = res["movimenti"][0]["hash"], res["movimenti"][1]["hash"]
+    assert h0 != h1
+    # la prima occorrenza usa l'hash storico (retrocompat)
+    assert h0 == econ_import.row_hash("postepay", "2026-06-10", -1.0, "CAFFE BAR")
+
+
+async def test_import_righe_identiche_e_reimport(db):
+    movs = econ_import.parse(_PP_DUP)["movimenti"]
+    out1 = await db.import_transazioni("postepay_andrea", movs)
+    assert out1["inserite"] == 2 and out1["duplicate"] == 0
+    out2 = await db.import_transazioni("postepay_andrea", movs)
+    assert out2["inserite"] == 0 and out2["duplicate"] == 2

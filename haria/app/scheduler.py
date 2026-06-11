@@ -1,6 +1,7 @@
 """Scheduler HARIA (APScheduler asyncio): promemoria one-shot/ricorrenti,
 briefing news cron, e job proattivi food_diary (piano del giorno, scadenze
 dispensa, report settimanale) + refresh sensori MQTT."""
+import asyncio
 import logging
 import re
 from datetime import datetime, date, timedelta
@@ -46,12 +47,22 @@ def _cron_trigger(expr: str) -> CronTrigger:
 
 
 async def _fire(reminder_id: int, user_id: str, message: str, recurring: str | None):
-    try:
-        await _bot.send_message(chat_id=int(user_id), text=f"⏰ Promemoria: {message}")
-        logger.info("Promemoria %s inviato a %s", reminder_id, user_id)
-    except Exception as e:
-        logger.error("Invio promemoria %s fallito: %s", reminder_id, e)
-    if not recurring:
+    # disattiva il one-shot SOLO a invio riuscito: se Telegram e' irraggiungibile
+    # un retry dopo 60s; se fallisce anche quello il reminder resta attivo e
+    # verra' ricaricato al prossimo riavvio (no perdita).
+    sent = False
+    for attempt in range(2):
+        try:
+            await _bot.send_message(chat_id=int(user_id), text=f"⏰ Promemoria: {message}")
+            logger.info("Promemoria %s inviato a %s", reminder_id, user_id)
+            sent = True
+            break
+        except Exception as e:
+            logger.error("Invio promemoria %s fallito (tentativo %d): %s",
+                         reminder_id, attempt + 1, e)
+            if attempt == 0:
+                await asyncio.sleep(60)
+    if not recurring and sent:
         await deactivate_reminder(reminder_id)
 
 
@@ -268,6 +279,30 @@ def schedule_mqtt_refresh():
     _scheduler.add_job(_mqtt_refresh, IntervalTrigger(minutes=5),
                        id="mqtt_refresh", replace_existing=True)
     logger.info("Refresh MQTT cibo registrato (ogni 5 min).")
+
+
+def is_running() -> bool:
+    """True se lo scheduler è stato avviato."""
+    return _scheduler is not None
+
+
+def schedule_econ_refresh():
+    """Ripubblica i sensori economia+bollette ogni notte alle 00:05, così a
+    cavallo del mese spese_mese/budget/confronto non restano sul mese vecchio."""
+    if not _scheduler:
+        return
+
+    async def _job():
+        try:
+            import mqtt_pub
+            await mqtt_pub.publish_economia()
+            await mqtt_pub.publish_bollette()
+        except Exception as e:
+            logger.debug("Refresh economia/bollette fallito: %s", e)
+
+    _scheduler.add_job(_job, CronTrigger(hour=0, minute=5),
+                       id="econ_refresh", replace_existing=True)
+    logger.info("Refresh notturno economia/bollette registrato (00:05).")
 
 
 def schedule_food_jobs(bot):

@@ -419,6 +419,38 @@ async def test_gestisci_obiettivi_elimina(db, monkeypatch):
     assert await db.get_obiettivi() == []
 
 
+async def test_add_transazione_conto_custom(db, monkeypatch):
+    # TASK 1: conto custom creato a runtime deve essere usabile
+    _wire(monkeypatch, db)
+    await db.add_conto("revolut_test", "carta")
+    out = await economia.handle("add_transazione", {
+        "tipo": "spesa", "importo": 10, "categoria": "svago", "conto": "revolut_test",
+    }, "123")
+    data = json.loads(out)
+    assert data["ok"] is True
+    assert data["conto"] == "revolut_test"
+
+
+async def test_add_transazione_data_invalida(db, monkeypatch):
+    # TASK 5: data non ISO -> errore, niente inserito
+    _wire(monkeypatch, db)
+    out = await economia.handle("add_transazione", {
+        "tipo": "spesa", "importo": 10, "categoria": "svago", "data": "12/06/2026",
+    }, "u1")
+    assert "Data non valida" in out
+    assert await db.list_transazioni() == []
+
+
+async def test_reset_anteprima_menziona_obiettivi(db, monkeypatch):
+    # TASK 3: anteprima reset elenca i salvadanai
+    _wire(monkeypatch, db)
+    await db.set_obiettivo("vacanze", 1000)
+    out = await economia.handle("reset_economia", {}, "u1")
+    data = json.loads(out)
+    assert "salvadanai" in data["msg"] or "obiettivi" in data["msg"]
+    assert "obiettivi_attuali" in data
+
+
 async def test_import_estratto_bytes_postepay(db, monkeypatch):
     _wire(monkeypatch, db)
     import econ_import
