@@ -90,11 +90,28 @@ input[type=checkbox]{width:18px;height:18px;cursor:pointer}
 .pbar{background:#e8edf5;border-radius:6px;height:16px;width:100%;overflow:hidden;margin-top:4px}
 .pbar > span{display:block;height:100%;background:#3367d6;border-radius:6px}
 .pbar.over > span{background:#c0392b}
-.kpi{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px}
-.kpi .k{background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 3px rgba(0,0,0,.1);min-width:120px}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:18px}
+.kpi .k{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
 .kpi .k .v{font-size:22px;font-weight:700}
-.kpi .k .l{font-size:12px;color:#888}
+.kpi .k .l{font-size:12px;color:#888;margin-top:2px}
 .pos{color:#39a845}.neg{color:#c0392b}
+.mnav{display:flex;align-items:center;justify-content:center;gap:16px;margin:6px 0 20px}
+.mnav a{font-size:18px;text-decoration:none;color:#3367d6;background:#fff;border-radius:8px;padding:4px 14px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.mnav a.off{visibility:hidden}
+.mnav .cur{font-size:18px;font-weight:700;min-width:180px;text-align:center;text-transform:capitalize}
+.brow{background:#fff;border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:10px}
+.brow .top{display:flex;justify-content:space-between;align-items:baseline;font-size:14px;margin-bottom:7px}
+.brow .cat{font-weight:600;text-transform:capitalize}
+.brow .amt{color:#555;font-size:13px}
+.bar2{position:relative;background:#eef2f7;border-radius:8px;height:22px;overflow:hidden}
+.bar2 > span{position:absolute;left:0;top:0;height:100%;border-radius:8px;transition:width .3s}
+.bar2 .pct{position:absolute;right:8px;top:0;line-height:22px;font-size:12px;color:#222;font-weight:700}
+.b-ok > span{background:#39a845}.b-warn > span{background:#e08e0b}.b-over > span{background:#c0392b}
+.b-neutral > span{background:#5b8def}
+.saldi-mini{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.saldi-mini .s{background:#fff;border-radius:10px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.saldi-mini .s .n{font-size:13px;color:#888}
+.saldi-mini .s .v{font-size:17px;font-weight:700;margin-top:2px}
 """
 
 
@@ -172,86 +189,128 @@ def _eur(v) -> str:
     return f"<span class='{cls}'>€{v:,.2f}</span>"
 
 
-async def _h_economia(request):
-    today = date.today()
-    first = today.replace(day=1)
-    nxt = first.replace(year=first.year + 1, month=1) if first.month == 12 \
-        else first.replace(month=first.month + 1)
-    last = nxt - timedelta(days=1)
+_MESI_IT = ["", "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+            "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"]
 
+
+def _add_month(d: date, delta: int) -> date:
+    m = d.month - 1 + delta
+    return date(d.year + m // 12, m % 12 + 1, 1)
+
+
+async def _h_economia(request):
+    import re
+    today = date.today()
+    cur_first = today.replace(day=1)
+    q = request.query.get("m", "")
+    mm = re.match(r"^(\d{4})-(\d{1,2})$", q)
+    if mm and 1 <= int(mm.group(2)) <= 12:
+        first = date(int(mm.group(1)), int(mm.group(2)), 1)
+    else:
+        first = cur_first
+    nxt = _add_month(first, 1)
+    last = nxt - timedelta(days=1)
+    prev = _add_month(first, -1)
+
+    rep = await riepilogo_spese(data_da=first.isoformat(), data_a=last.isoformat())
+    budgets = await get_budget_status(first.year, first.month)
     saldi = await get_saldi()
     totale = round(sum(s["saldo"] for s in saldi), 2)
-    per_int: dict = {}
-    for s in saldi:
-        per_int[s["intestatario"]] = round(per_int.get(s["intestatario"], 0.0) + s["saldo"], 2)
-    rep = await riepilogo_spese(data_da=first.isoformat(), data_a=last.isoformat())
-    budgets = await get_budget_status(today.year, today.month)
     obiettivi = await get_obiettivi()
 
     body = "<h2>💰 Economia domestica</h2>"
 
-    # KPI totali
-    body += "<div class='kpi'>"
-    body += f"<div class='k'><div class='v'>{_eur(totale)}</div><div class='l'>Saldo totale</div></div>"
-    body += f"<div class='k'><div class='v'>{_eur(rep['entrate'])}</div><div class='l'>Entrate mese</div></div>"
-    body += f"<div class='k'><div class='v'>{_eur(rep['uscite'])}</div><div class='l'>Uscite mese</div></div>"
-    body += f"<div class='k'><div class='v'>{_eur(rep['netto'])}</div><div class='l'>Netto mese</div></div>"
+    # navigazione mese (avanti nascosto se siamo nel mese corrente)
+    next_off = "off" if first >= cur_first else ""
+    body += "<div class='mnav'>"
+    body += f"<a href='./economia?m={prev.year:04d}-{prev.month:02d}'>←</a>"
+    body += f"<span class='cur'>{_MESI_IT[first.month]} {first.year}</span>"
+    body += f"<a class='{next_off}' href='./economia?m={nxt.year:04d}-{nxt.month:02d}'>→</a>"
     body += "</div>"
 
-    # saldi per persona
-    body += "<div class='sec'>Per persona</div><table><tr><th>Intestatario</th><th>Saldo</th></tr>"
-    for intest, val in sorted(per_int.items()):
-        body += f"<tr><td>{_e(intest.capitalize())}</td><td>{_eur(val)}</td></tr>"
-    body += "</table>"
+    tot_budget = round(sum(b["budget"] for b in budgets), 2)
+    tot_budget_speso = round(sum(b["speso"] for b in budgets), 2)
 
-    # saldi conti
-    body += "<div class='sec'>Conti</div><table><tr><th>Conto</th><th>Intestatario</th><th>Saldo</th></tr>"
-    for s in saldi:
-        body += (f"<tr><td>{_e(s['conto'])}</td><td>{_e(s['intestatario'])}</td>"
-                 f"<td>{_eur(s['saldo'])}</td></tr>")
-    body += "</table>"
+    # KPI del mese
+    body += "<div class='kpi'>"
+    body += f"<div class='k'><div class='v'>{_eur(rep['uscite'])}</div><div class='l'>Uscite</div></div>"
+    body += f"<div class='k'><div class='v'>{_eur(rep['entrate'])}</div><div class='l'>Entrate</div></div>"
+    body += f"<div class='k'><div class='v'>{_eur(rep['netto'])}</div><div class='l'>Netto</div></div>"
+    if tot_budget:
+        body += (f"<div class='k'><div class='v'>€{tot_budget_speso:,.0f}/{tot_budget:,.0f}</div>"
+                 f"<div class='l'>Budget usato</div></div>")
+    body += "</div>"
 
-    # spese per categoria (mese corrente)
-    body += f"<div class='sec'>Spese di {first.strftime('%m/%Y')} per categoria</div>"
-    if rep["per_categoria"]:
-        body += "<table><tr><th>Categoria</th><th>Speso</th></tr>"
-        for c in rep["per_categoria"]:
-            body += f"<tr><td>{_e(c['categoria'])}</td><td>{_eur(c['totale'])}</td></tr>"
-        body += "</table>"
-    else:
-        body += "<div class='card muted'>Nessuna spesa registrata questo mese.</div>"
-
-    # budget
-    body += "<div class='sec'>Budget del mese</div>"
+    # BUDGET — centrale
+    body += "<div class='sec'>📊 Budget del mese</div>"
     if budgets:
         for b in budgets:
-            perc = min(b["perc"], 100)
-            over = "over" if b["sforato"] else ""
-            body += ("<div class='card'>"
-                     f"<b>{_e(b['categoria'])}</b> — €{b['speso']:.2f} / €{b['budget']:.2f} "
-                     f"({b['perc']:.0f}%)"
-                     + ("  ⚠️ sforato" if b["sforato"] else "")
-                     + f"<div class='pbar {over}'><span style='width:{perc}%'></span></div></div>")
+            perc = b["perc"]
+            w = min(perc, 100)
+            cls = "b-over" if b["sforato"] else ("b-warn" if perc >= 80 else "b-ok")
+            resid = b["residuo"]
+            resid_lbl = (f"sforato di €{abs(resid):.2f}" if resid < 0
+                         else f"restano €{resid:.2f}")
+            body += (
+                "<div class='brow'>"
+                f"<div class='top'><span class='cat'>{_e(b['categoria'])}</span>"
+                f"<span class='amt'>€{b['speso']:.2f} / €{b['budget']:.2f} · {resid_lbl}</span></div>"
+                f"<div class='bar2 {cls}'><span style='width:{w}%'></span>"
+                f"<span class='pct'>{perc:.0f}%</span></div>"
+                "</div>")
     else:
-        body += "<div class='card muted'>Nessun budget impostato. Chiedi a HARIA: «budget di 300 al mese per alimentari».</div>"
+        body += ("<div class='card muted'>Nessun budget impostato. Chiedi a HARIA: "
+                 "«budget di 300 al mese per alimentari».</div>")
+
+    # spese per categoria (mese selezionato) — barre proporzionali
+    body += "<div class='sec'>Spese per categoria</div>"
+    cats = rep["per_categoria"]
+    if cats:
+        maxc = max(abs(c["totale"]) for c in cats) or 1
+        for c in cats:
+            sp = abs(c["totale"])
+            w = round(sp / maxc * 100)
+            body += (
+                "<div class='brow'>"
+                f"<div class='top'><span class='cat'>{_e(c['categoria'])}</span>"
+                f"<span class='amt'>€{sp:.2f}</span></div>"
+                f"<div class='bar2 b-neutral'><span style='width:{w}%'></span></div>"
+                "</div>")
+    else:
+        body += "<div class='card muted'>Nessuna spesa in questo mese.</div>"
 
     # salvadanai
-    body += "<div class='sec'>Salvadanai / obiettivi</div>"
+    body += "<div class='sec'>🐷 Salvadanai</div>"
     if obiettivi:
         for o in obiettivi:
-            perc = min(o["perc"], 100)
+            w = min(o["perc"], 100)
+            cls = "b-ok" if o["raggiunto"] else "b-neutral"
             extra = ""
             if o["quota_mensile"]:
-                extra = f" · quota suggerita €{o['quota_mensile']:.2f}/mese"
+                extra = f" · €{o['quota_mensile']:.0f}/mese"
                 if o["mesi_rimanenti"]:
-                    extra += f" ({o['mesi_rimanenti']} mesi)"
-            done = "  ✅" if o["raggiunto"] else ""
-            body += ("<div class='card'>"
-                     f"<b>{_e(o['nome'])}</b> — €{o['accantonato']:.2f} / €{o['target']:.2f} "
-                     f"({o['perc']:.0f}%){done}{_e(extra)}"
-                     f"<div class='pbar'><span style='width:{perc}%'></span></div></div>")
+                    extra += f" per {o['mesi_rimanenti']} mesi"
+            done = " ✅" if o["raggiunto"] else ""
+            body += (
+                "<div class='brow'>"
+                f"<div class='top'><span class='cat'>{_e(o['nome'])}{done}</span>"
+                f"<span class='amt'>€{o['accantonato']:.2f} / €{o['target']:.2f}{_e(extra)}</span></div>"
+                f"<div class='bar2 {cls}'><span style='width:{w}%'></span>"
+                f"<span class='pct'>{o['perc']:.0f}%</span></div>"
+                "</div>")
     else:
-        body += "<div class='card muted'>Nessun salvadanaio. Chiedi a HARIA: «obiettivo 1000 euro per le vacanze».</div>"
+        body += ("<div class='card muted'>Nessun salvadanaio. Chiedi a HARIA: "
+                 "«obiettivo 1000 euro per le vacanze».</div>")
+
+    # saldi conti attuali (compatti, non legati al mese)
+    body += "<div class='sec'>Saldi attuali</div>"
+    body += "<div class='saldi-mini'>"
+    body += (f"<div class='s'><div class='n'>Totale</div>"
+             f"<div class='v'>{_eur(totale)}</div></div>")
+    for s in saldi:
+        body += (f"<div class='s'><div class='n'>{_e(s['conto'])}</div>"
+                 f"<div class='v'>{_eur(s['saldo'])}</div></div>")
+    body += "</div>"
 
     return _page("Economia", body)
 
