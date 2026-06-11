@@ -31,16 +31,18 @@ async def _setup(monkeypatch):
 
 async def test_publish_economia_saldi(db, monkeypatch):
     fake = await _setup(monkeypatch)
-    await db.add_transazione("contanti", "2026-06-01", -20, "alimentari", "frutta")
-    await db.add_transazione("postepay", "2026-06-02", -30, "trasporti", "bus")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -20, "alimentari", "frutta")
+    await db.add_transazione("postepay_andrea", "2026-06-02", -30, "trasporti", "bus")
 
     await mqtt_pub.publish_economia()
 
-    assert _decode(fake, "haria/economia/saldo/contanti") == -20.0
-    assert _decode(fake, "haria/economia/saldo/postepay") == -30.0
+    assert _decode(fake, "haria/economia/saldo/contanti_andrea") == -20.0
+    assert _decode(fake, "haria/economia/saldo/postepay_andrea") == -30.0
     assert _decode(fake, "haria/economia/saldo_totale") == -50.0
+    # saldo aggregato per intestatario
+    assert _decode(fake, "haria/economia/saldo_intestatario/andrea") == -50.0
     # discovery pubblicata
-    assert "homeassistant/sensor/haria_econ_saldo_contanti/config" in fake.published
+    assert "homeassistant/sensor/haria_econ_saldo_contanti_andrea/config" in fake.published
     assert "homeassistant/sensor/haria_econ_saldo_totale/config" in fake.published
 
 
@@ -48,8 +50,8 @@ async def test_publish_economia_spese_mese(db, monkeypatch):
     fake = await _setup(monkeypatch)
     from datetime import date
     oggi = date.today().isoformat()
-    await db.add_transazione("contanti", oggi, -40, "alimentari", "spesa")
-    await db.add_transazione("contanti", oggi, 100, "stipendio", "")
+    await db.add_transazione("contanti_andrea", oggi, -40, "alimentari", "spesa")
+    await db.add_transazione("contanti_andrea", oggi, 100, "stipendio", "")
 
     await mqtt_pub.publish_economia()
 
@@ -64,7 +66,7 @@ async def test_publish_economia_budget(db, monkeypatch):
     from datetime import date
     oggi = date.today().isoformat()
     await db.set_budget("alimentari", 300)
-    await db.add_transazione("contanti", oggi, -150, "alimentari", "spesa")
+    await db.add_transazione("contanti_andrea", oggi, -150, "alimentari", "spesa")
 
     await mqtt_pub.publish_economia()
 

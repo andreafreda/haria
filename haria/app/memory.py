@@ -174,6 +174,7 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome TEXT NOT NULL UNIQUE,
                 tipo TEXT NOT NULL,
+                intestatario TEXT NOT NULL DEFAULT 'famiglia',
                 saldo_iniziale REAL NOT NULL DEFAULT 0,
                 attivo INTEGER NOT NULL DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -208,12 +209,24 @@ async def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # migrazione: aggiungi colonna intestatario se manca (DB pre-profilazione)
+        cur = await db.execute("PRAGMA table_info(econ_conti)")
+        ec_cols = [r[1] for r in await cur.fetchall()]
+        if "intestatario" not in ec_cols:
+            await db.execute(
+                "ALTER TABLE econ_conti ADD COLUMN intestatario TEXT NOT NULL DEFAULT 'famiglia'"
+            )
         # seed conti default da econ_def.CONTI (idempotente)
         for nome, d in econ_def.CONTI.items():
             await db.execute(
-                "INSERT OR IGNORE INTO econ_conti (nome, tipo) VALUES (?, ?)",
-                (nome, d["tipo"]),
+                "INSERT OR IGNORE INTO econ_conti (nome, tipo, intestatario) VALUES (?, ?, ?)",
+                (nome, d["tipo"], d.get("intestatario", "famiglia")),
             )
+        # migrazione profilazione: disattiva i conti generici pre-profilazione
+        # (sostituiti dalle varianti per membro). Dati test, non distruttivo.
+        await db.execute(
+            "UPDATE econ_conti SET attivo=0 WHERE nome IN ('postepay','paypal','contanti')"
+        )
         # seed categorie default (idempotente)
         for cat in econ_def.CATEGORIE_DEFAULT:
             await db.execute(
@@ -239,6 +252,7 @@ async def init_db():
             ("briefings", "num_news", "ALTER TABLE briefings ADD COLUMN num_news INTEGER DEFAULT 5"),
             ("meal_plan", "kcal", "ALTER TABLE meal_plan ADD COLUMN kcal REAL"),
             ("shopping_items", "price", "ALTER TABLE shopping_items ADD COLUMN price REAL"),
+            ("econ_transazioni", "import_hash", "ALTER TABLE econ_transazioni ADD COLUMN import_hash TEXT"),
             ("meals", "fiber_g", "ALTER TABLE meals ADD COLUMN fiber_g REAL"),
             ("meals", "sugar_g", "ALTER TABLE meals ADD COLUMN sugar_g REAL"),
             ("meals", "sat_fat_g", "ALTER TABLE meals ADD COLUMN sat_fat_g REAL"),
@@ -1482,41 +1496,44 @@ async def seed_bollette(rows: list[tuple]):
 
 # ---- Economia domestica (conti, transazioni) ------------------------------
 
+def _conto_dict(r) -> dict:
+    return {"id": r[0], "nome": r[1], "tipo": r[2], "intestatario": r[3],
+            "saldo_iniziale": r[4], "attivo": bool(r[5])}
+
+
 async def list_conti(solo_attivi: bool = True) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
-        sql = "SELECT id, nome, tipo, saldo_iniziale, attivo FROM econ_conti"
+        sql = "SELECT id, nome, tipo, intestatario, saldo_iniziale, attivo FROM econ_conti"
         if solo_attivi:
             sql += " WHERE attivo=1"
         sql += " ORDER BY id"
         cursor = await db.execute(sql)
         rows = await cursor.fetchall()
-    return [
-        {"id": r[0], "nome": r[1], "tipo": r[2], "saldo_iniziale": r[3], "attivo": bool(r[4])}
-        for r in rows
-    ]
+    return [_conto_dict(r) for r in rows]
 
 
 async def get_conto(nome: str) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT id, nome, tipo, saldo_iniziale, attivo FROM econ_conti WHERE nome=?",
+            "SELECT id, nome, tipo, intestatario, saldo_iniziale, attivo "
+            "FROM econ_conti WHERE nome=?",
             (nome,),
         )
         r = await cursor.fetchone()
-    if not r:
-        return None
-    return {"id": r[0], "nome": r[1], "tipo": r[2], "saldo_iniziale": r[3], "attivo": bool(r[4])}
+    return _conto_dict(r) if r else None
 
 
-async def add_conto(nome: str, tipo: str, saldo_iniziale: float = 0.0) -> int:
+async def add_conto(nome: str, tipo: str, saldo_iniziale: float = 0.0,
+                    intestatario: str = "famiglia") -> int:
     """Crea (o riattiva) un conto custom, oltre a quelli seedati da econ_def."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            """INSERT INTO econ_conti (nome, tipo, saldo_iniziale, attivo)
-               VALUES (?, ?, ?, 1)
+            """INSERT INTO econ_conti (nome, tipo, intestatario, saldo_iniziale, attivo)
+               VALUES (?, ?, ?, ?, 1)
                ON CONFLICT(nome) DO UPDATE SET
-                   tipo=excluded.tipo, saldo_iniziale=excluded.saldo_iniziale, attivo=1""",
-            (nome, tipo, float(saldo_iniziale)),
+                   tipo=excluded.tipo, intestatario=excluded.intestatario,
+                   saldo_iniziale=excluded.saldo_iniziale, attivo=1""",
+            (nome, tipo, intestatario, float(saldo_iniziale)),
         )
         await db.commit()
         cursor = await db.execute("SELECT id FROM econ_conti WHERE nome=?", (nome,))
@@ -1588,6 +1605,45 @@ async def delete_transazione(transazione_id: int) -> bool:
         cursor = await db.execute("DELETE FROM econ_transazioni WHERE id=?", (transazione_id,))
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def import_transazioni(conto: str, movimenti: list[dict]) -> dict:
+    """Bulk import movimenti da estratto. Ogni movimento: {data, importo,
+    descrizione, categoria, hash}. Dedup via import_hash (per conto): reimportare
+    lo stesso file non duplica. Ritorna {inserite, duplicate, totale}."""
+    conto_row = await get_conto(conto)
+    if conto_row is None:
+        raise ValueError(f"conto sconosciuto: {conto}")
+    cid = conto_row["id"]
+    inserite = duplicate = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT import_hash FROM econ_transazioni "
+            "WHERE conto_id=? AND import_hash IS NOT NULL",
+            (cid,),
+        )
+        existing = {r[0] for r in await cur.fetchall()}
+        for m in movimenti:
+            h = m.get("hash")
+            if h and h in existing:
+                duplicate += 1
+                continue
+            if h:
+                existing.add(h)
+            cat = (m.get("categoria") or "altro").strip().lower()
+            await db.execute(
+                "INSERT OR IGNORE INTO econ_categorie (nome) VALUES (?)", (cat,)
+            )
+            await db.execute(
+                """INSERT INTO econ_transazioni
+                   (conto_id, data, importo, categoria, descrizione, import_hash)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (cid, m["data"], float(m["importo"]), cat,
+                 (m.get("descrizione") or "").strip(), h),
+            )
+            inserite += 1
+        await db.commit()
+    return {"inserite": inserite, "duplicate": duplicate, "totale": len(movimenti)}
 
 
 async def list_categorie() -> list[str]:
@@ -1888,10 +1944,10 @@ async def reset_economia(reset_categorie: bool = False,
 
 
 async def get_saldi() -> list[dict]:
-    """Saldo di tutti i conti attivi: [{conto, tipo, saldo}]."""
+    """Saldo di tutti i conti attivi: [{conto, tipo, intestatario, saldo}]."""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            """SELECT c.nome, c.tipo,
+            """SELECT c.nome, c.tipo, c.intestatario,
                       c.saldo_iniziale + COALESCE(SUM(t.importo), 0)
                FROM econ_conti c
                LEFT JOIN econ_transazioni t ON t.conto_id = c.id
@@ -1900,18 +1956,30 @@ async def get_saldi() -> list[dict]:
                ORDER BY c.id"""
         )
         rows = await cursor.fetchall()
-    return [{"conto": r[0], "tipo": r[1], "saldo": round(r[2], 2)} for r in rows]
+    return [{"conto": r[0], "tipo": r[1], "intestatario": r[2], "saldo": round(r[3], 2)}
+            for r in rows]
+
+
+async def saldi_per_intestatario() -> dict:
+    """Saldo totale aggregato per intestatario: {intestatario: saldo}."""
+    out: dict = {}
+    for s in await get_saldi():
+        out[s["intestatario"]] = round(out.get(s["intestatario"], 0.0) + s["saldo"], 2)
+    return out
 
 
 async def riepilogo_spese(data_da: str | None = None, data_a: str | None = None,
-                          conto: str | None = None) -> dict:
+                          conto: str | None = None, intestatario: str | None = None) -> dict:
     """Aggrega movimenti nel periodo: totale entrate/uscite/netto + breakdown
-    spese per categoria (solo importi negativi)."""
+    spese per categoria (solo importi negativi). Filtri opz: conto, intestatario."""
     where = "WHERE 1=1"
     params: list = []
     if conto:
         where += " AND c.nome=?"
         params.append(conto)
+    if intestatario:
+        where += " AND c.intestatario=?"
+        params.append(intestatario)
     if data_da:
         where += " AND t.data>=?"
         params.append(data_da)

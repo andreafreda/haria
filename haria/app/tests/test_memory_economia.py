@@ -32,13 +32,13 @@ async def test_add_conto_idempotente(db):
 
 
 async def test_saldo_iniziale_no_transazioni(db):
-    assert await db.get_saldo("contanti") == 0
+    assert await db.get_saldo("contanti_andrea") == 0
 
 
 async def test_add_transazione_e_saldo(db):
-    await db.add_transazione("contanti", "2026-06-01", -20, "spesa", "frutta")
-    await db.add_transazione("contanti", "2026-06-02", 100, "entrata", "stipendio")
-    assert await db.get_saldo("contanti") == 80
+    await db.add_transazione("contanti_andrea", "2026-06-01", -20, "spesa", "frutta")
+    await db.add_transazione("contanti_andrea", "2026-06-02", 100, "entrata", "stipendio")
+    assert await db.get_saldo("contanti_andrea") == 80
 
 
 async def test_add_transazione_conto_sconosciuto(db):
@@ -52,16 +52,16 @@ async def test_get_saldo_conto_sconosciuto(db):
 
 
 async def test_list_transazioni_filtri(db):
-    await db.add_transazione("contanti", "2026-06-01", -20, "spesa", "frutta")
-    await db.add_transazione("postepay", "2026-06-02", -5, "spesa", "caffe")
-    await db.add_transazione("contanti", "2026-06-03", -10, "regali", "fiori")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -20, "spesa", "frutta")
+    await db.add_transazione("postepay_andrea", "2026-06-02", -5, "spesa", "caffe")
+    await db.add_transazione("contanti_andrea", "2026-06-03", -10, "regali", "fiori")
 
     tutte = await db.list_transazioni()
     assert len(tutte) == 3
 
-    solo_contanti = await db.list_transazioni(conto="contanti")
+    solo_contanti = await db.list_transazioni(conto="contanti_andrea")
     assert len(solo_contanti) == 2
-    assert all(t["conto"] == "contanti" for t in solo_contanti)
+    assert all(t["conto"] == "contanti_andrea" for t in solo_contanti)
 
     solo_spesa = await db.list_transazioni(categoria="spesa")
     assert len(solo_spesa) == 2
@@ -72,40 +72,40 @@ async def test_list_transazioni_filtri(db):
 
 
 async def test_list_transazioni_ordine_desc(db):
-    await db.add_transazione("contanti", "2026-06-01", -1, "spesa", "a")
-    await db.add_transazione("contanti", "2026-06-03", -1, "spesa", "b")
-    await db.add_transazione("contanti", "2026-06-02", -1, "spesa", "c")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -1, "spesa", "a")
+    await db.add_transazione("contanti_andrea", "2026-06-03", -1, "spesa", "b")
+    await db.add_transazione("contanti_andrea", "2026-06-02", -1, "spesa", "c")
 
-    righe = await db.list_transazioni(conto="contanti")
+    righe = await db.list_transazioni(conto="contanti_andrea")
     assert [r["descrizione"] for r in righe] == ["b", "c", "a"]
 
 
 async def test_delete_transazione(db):
-    tid = await db.add_transazione("contanti", "2026-06-01", -20, "spesa", "frutta")
-    assert await db.get_saldo("contanti") == -20
+    tid = await db.add_transazione("contanti_andrea", "2026-06-01", -20, "spesa", "frutta")
+    assert await db.get_saldo("contanti_andrea") == -20
 
     ok = await db.delete_transazione(tid)
     assert ok is True
-    assert await db.get_saldo("contanti") == 0
+    assert await db.get_saldo("contanti_andrea") == 0
 
     assert await db.delete_transazione(tid) is False
 
 
 async def test_get_saldi_tutti(db):
-    await db.add_transazione("contanti", "2026-06-01", -20, "spesa", "frutta")
-    await db.add_transazione("postepay", "2026-06-01", -5, "spesa", "caffe")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -20, "spesa", "frutta")
+    await db.add_transazione("postepay_andrea", "2026-06-01", -5, "spesa", "caffe")
     saldi = {s["conto"]: s["saldo"] for s in await db.get_saldi()}
-    assert saldi["contanti"] == -20
-    assert saldi["postepay"] == -5
+    assert saldi["contanti_andrea"] == -20
+    assert saldi["postepay_andrea"] == -5
     assert saldi["bancoposta"] == 0
     assert set(saldi.keys()) == set(econ_def.CONTI.keys())
 
 
 async def test_riepilogo_spese_totali_e_categorie(db):
-    await db.add_transazione("contanti", "2026-06-01", 1500, "stipendio", "")
-    await db.add_transazione("contanti", "2026-06-02", -200, "alimentari", "spesa")
-    await db.add_transazione("postepay", "2026-06-03", -50, "alimentari", "frutta")
-    await db.add_transazione("postepay", "2026-06-04", -80, "trasporti", "benzina")
+    await db.add_transazione("contanti_andrea", "2026-06-01", 1500, "stipendio", "")
+    await db.add_transazione("contanti_andrea", "2026-06-02", -200, "alimentari", "spesa")
+    await db.add_transazione("postepay_andrea", "2026-06-03", -50, "alimentari", "frutta")
+    await db.add_transazione("postepay_andrea", "2026-06-04", -80, "trasporti", "benzina")
 
     rep = await db.riepilogo_spese()
     assert rep["entrate"] == 1500
@@ -117,18 +117,18 @@ async def test_riepilogo_spese_totali_e_categorie(db):
 
 
 async def test_riepilogo_spese_filtro_periodo_e_conto(db):
-    await db.add_transazione("contanti", "2026-05-31", -10, "alimentari", "x")
-    await db.add_transazione("contanti", "2026-06-15", -20, "alimentari", "y")
-    await db.add_transazione("postepay", "2026-06-15", -99, "svago", "z")
+    await db.add_transazione("contanti_andrea", "2026-05-31", -10, "alimentari", "x")
+    await db.add_transazione("contanti_andrea", "2026-06-15", -20, "alimentari", "y")
+    await db.add_transazione("postepay_andrea", "2026-06-15", -99, "svago", "z")
 
-    rep = await db.riepilogo_spese(data_da="2026-06-01", data_a="2026-06-30", conto="contanti")
+    rep = await db.riepilogo_spese(data_da="2026-06-01", data_a="2026-06-30", conto="contanti_andrea")
     assert rep["uscite"] == -20
     assert len(rep["per_categoria"]) == 1
     assert rep["per_categoria"][0]["categoria"] == "alimentari"
 
 
 async def test_riepilogo_spese_solo_entrate(db):
-    await db.add_transazione("contanti", "2026-06-01", 1500, "stipendio", "")
+    await db.add_transazione("contanti_andrea", "2026-06-01", 1500, "stipendio", "")
     rep = await db.riepilogo_spese()
     assert rep["entrate"] == 1500.0
     assert rep["uscite"] == 0.0
@@ -146,9 +146,9 @@ async def test_riepilogo_spese_vuoto(db):
 
 
 async def test_amount_rounding(db):
-    await db.add_transazione("contanti", "2026-06-01", -19.995, "spesa", "x")
-    await db.add_transazione("contanti", "2026-06-02", 0.001, "entrata", "y")
-    assert await db.get_saldo("contanti") == -19.99
+    await db.add_transazione("contanti_andrea", "2026-06-01", -19.995, "spesa", "x")
+    await db.add_transazione("contanti_andrea", "2026-06-02", 0.001, "entrata", "y")
+    assert await db.get_saldo("contanti_andrea") == -19.99
 
 
 # ---- categorie ----
@@ -181,7 +181,7 @@ async def test_normalize_categoria_vuota(db):
 
 
 async def test_rename_categoria_propaga(db):
-    await db.add_transazione("contanti", "2026-06-01", -10, "alimentari", "x")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
     ok = await db.rename_categoria("alimentari", "Cibo")
     assert ok is True
     cats = await db.list_categorie()
@@ -196,8 +196,8 @@ async def test_rename_categoria_inesistente(db):
 
 
 async def test_rename_su_esistente_equivale_merge(db):
-    await db.add_transazione("contanti", "2026-06-01", -10, "carburante", "x")
-    await db.add_transazione("contanti", "2026-06-02", -5, "trasporti", "y")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "carburante", "x")
+    await db.add_transazione("contanti_andrea", "2026-06-02", -5, "trasporti", "y")
     ok = await db.rename_categoria("carburante", "trasporti")
     assert ok is True
     cats = await db.list_categorie()
@@ -209,8 +209,8 @@ async def test_rename_su_esistente_equivale_merge(db):
 
 async def test_merge_categoria(db):
     await db.normalize_categoria("cibo")
-    await db.add_transazione("contanti", "2026-06-01", -10, "cibo", "x")
-    await db.add_transazione("contanti", "2026-06-02", -5, "alimentari", "y")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "cibo", "x")
+    await db.add_transazione("contanti_andrea", "2026-06-02", -5, "alimentari", "y")
     ok = await db.merge_categoria("cibo", "alimentari")
     assert ok is True
     cats = await db.list_categorie()
@@ -224,7 +224,7 @@ async def test_merge_categoria_src_inesistente(db):
 
 async def test_merge_categoria_dst_creata(db):
     await db.normalize_categoria("vecchia")
-    await db.add_transazione("contanti", "2026-06-01", -10, "vecchia", "x")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "vecchia", "x")
     ok = await db.merge_categoria("vecchia", "nuovissima")
     assert ok is True
     cats = await db.list_categorie()
@@ -239,13 +239,13 @@ async def test_merge_categoria_su_se_stessa(db):
 # ---- reset ----
 
 async def test_reset_economia_solo_transazioni(db):
-    await db.add_transazione("contanti", "2026-06-01", -10, "alimentari", "x")
-    await db.add_transazione("postepay", "2026-06-02", -5, "svago", "y")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    await db.add_transazione("postepay_andrea", "2026-06-02", -5, "svago", "y")
     res = await db.reset_economia()
     assert res["transazioni_cancellate"] == 2
     assert res["categorie_resettate"] == 0
     assert res["saldi_azzerati"] == 0
-    assert await db.get_saldo("contanti") == 0
+    assert await db.get_saldo("contanti_andrea") == 0
     # categorie restano
     assert "alimentari" in await db.list_categorie()
 
@@ -310,11 +310,11 @@ async def test_delete_budget(db):
 
 async def test_get_budget_status_speso_e_residuo(db):
     await db.set_budget("alimentari", 300)
-    await db.add_transazione("contanti", "2026-06-05", -120, "alimentari", "spesa")
-    await db.add_transazione("postepay", "2026-06-20", -80, "alimentari", "spesa2")
+    await db.add_transazione("contanti_andrea", "2026-06-05", -120, "alimentari", "spesa")
+    await db.add_transazione("postepay_andrea", "2026-06-20", -80, "alimentari", "spesa2")
     # entrata e altra categoria non contano
-    await db.add_transazione("contanti", "2026-06-10", 500, "stipendio", "")
-    await db.add_transazione("contanti", "2026-06-10", -40, "svago", "cinema")
+    await db.add_transazione("contanti_andrea", "2026-06-10", 500, "stipendio", "")
+    await db.add_transazione("contanti_andrea", "2026-06-10", -40, "svago", "cinema")
 
     st = await db.get_budget_status(2026, 6)
     assert len(st) == 1
@@ -329,7 +329,7 @@ async def test_get_budget_status_speso_e_residuo(db):
 
 async def test_get_budget_status_sforamento(db):
     await db.set_budget("ristoranti", 100)
-    await db.add_transazione("postepay", "2026-06-05", -150, "ristoranti", "cena")
+    await db.add_transazione("postepay_andrea", "2026-06-05", -150, "ristoranti", "cena")
     st = await db.get_budget_status(2026, 6)
     assert st[0]["sforato"] is True
     assert st[0]["residuo"] == -50
@@ -338,8 +338,8 @@ async def test_get_budget_status_sforamento(db):
 
 async def test_get_budget_status_filtra_mese(db):
     await db.set_budget("alimentari", 300)
-    await db.add_transazione("contanti", "2026-05-31", -100, "alimentari", "maggio")
-    await db.add_transazione("contanti", "2026-06-01", -50, "alimentari", "giugno")
+    await db.add_transazione("contanti_andrea", "2026-05-31", -100, "alimentari", "maggio")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -50, "alimentari", "giugno")
     st = await db.get_budget_status(2026, 6)
     assert st[0]["speso"] == 50
 
@@ -351,8 +351,8 @@ async def test_get_budget_status_nessun_budget(db):
 async def test_get_budget_status_ordine_perc_desc(db):
     await db.set_budget("alimentari", 300)
     await db.set_budget("ristoranti", 100)
-    await db.add_transazione("contanti", "2026-06-01", -60, "alimentari", "")   # 20%
-    await db.add_transazione("contanti", "2026-06-01", -90, "ristoranti", "")   # 90%
+    await db.add_transazione("contanti_andrea", "2026-06-01", -60, "alimentari", "")   # 20%
+    await db.add_transazione("contanti_andrea", "2026-06-01", -90, "ristoranti", "")   # 90%
     st = await db.get_budget_status(2026, 6)
     assert [s["categoria"] for s in st] == ["ristoranti", "alimentari"]
 

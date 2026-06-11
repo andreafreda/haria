@@ -422,6 +422,7 @@ async def publish_economia():
     # --- saldi conti ---
     saldi = await get_saldi()
     totale = 0.0
+    per_intest: dict = {}
     for s in saldi:
         slug = _slug(s["conto"])
         label = _ECON_CONTI.get(s["conto"], {}).get("label", s["conto"].capitalize())
@@ -434,12 +435,24 @@ async def publish_economia():
         )
         _pub(topic, s["saldo"])
         totale += s["saldo"]
+        intest = s.get("intestatario", "famiglia")
+        per_intest[intest] = round(per_intest.get(intest, 0.0) + s["saldo"], 2)
     _disc_sensor(
         "haria_econ_saldo_totale", "Saldo totale", f"{_BASE_ECON}/saldo_totale", "€",
         icon="mdi:cash-multiple", device=_DEVICE_ECON, state_class="measurement",
         object_id="economia_saldo_totale",
     )
     _pub(f"{_BASE_ECON}/saldo_totale", round(totale, 2))
+    # saldo aggregato per intestatario (andrea/marina/famiglia)
+    for intest, val in per_intest.items():
+        slug = _slug(intest)
+        topic = f"{_BASE_ECON}/saldo_intestatario/{slug}"
+        _disc_sensor(
+            f"haria_econ_saldo_int_{slug}", f"Saldo {intest.capitalize()}", topic, "€",
+            icon="mdi:account-cash", device=_DEVICE_ECON, state_class="measurement",
+            object_id=f"economia_saldo_intestatario_{slug}",
+        )
+        _pub(topic, val)
 
     # --- spese del mese (totale uscite + breakdown per categoria) ---
     first, last, year, month = _month_bounds()

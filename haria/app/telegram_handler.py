@@ -224,14 +224,36 @@ async def _handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     doc = update.message.document
     mime = (doc.mime_type or "").lower()
-    if "pdf" not in mime and not (doc.file_name or "").lower().endswith(".pdf"):
-        await update.message.reply_text("Per ora gestisco solo PDF (es. diete).")
+    fname = (doc.file_name or "").lower()
+    caption = update.message.caption or ""
+    is_pdf = "pdf" in mime or fname.endswith(".pdf")
+    is_sheet = fname.endswith((".xlsx", ".csv")) or "spreadsheet" in mime or "excel" in mime \
+        or mime in ("text/csv", "application/csv")
+
+    # Estratto conto (xlsx/csv) -> import economia (se modulo abilitato)
+    if is_sheet and not is_pdf:
+        import modules as _mods
+        if not _mods.owns("add_transazione"):
+            await update.message.reply_text("Modulo economia non abilitato: non posso importare estratti.")
+            return
+        from modules import economia
+        doc_file = await doc.get_file()
+        content = bytes(await doc_file.download_as_bytearray())
+        await update.message.chat.send_action("typing")
+        try:
+            reply = await economia.import_estratto_bytes(content, fname, caption, chat_id)
+        except Exception as e:
+            reply = f"Import fallito: {e}"
+        await _reply(update.message, reply)
+        return
+
+    if not is_pdf:
+        await update.message.reply_text("Gestisco PDF (diete/bollette) ed estratti conto xlsx/csv.")
         return
     import base64
     doc_file = await doc.get_file()
     pdf_bytes = await doc_file.download_as_bytearray()
     doc_b64 = base64.b64encode(bytes(pdf_bytes)).decode("ascii")
-    caption = update.message.caption or ""
 
     await update.message.chat.send_action("typing")
     user_config = users[chat_id]
@@ -256,7 +278,7 @@ def build_app(token: str):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
     app.add_handler(MessageHandler(filters.VOICE, _handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, _handle_photo))
-    app.add_handler(MessageHandler(filters.Document.PDF, _handle_document))
+    app.add_handler(MessageHandler(filters.Document.ALL, _handle_document))
     # refresh entity cache at startup and every 24h
     app.job_queue.run_once(_job_refresh_entities, when=10)
     app.job_queue.run_repeating(_job_refresh_entities, interval=86400, first=86400)

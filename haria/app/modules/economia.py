@@ -1,27 +1,42 @@
 """Modulo economia domestica: registrazione movimenti (spese/entrate) via chat.
 
 Fonte di verita' = tabelle econ_conti/econ_transazioni nel DB HARIA (memory.py).
-I conti sono definiti in econ_def.CONTI (bancoposta, postepay, paypal, contanti);
-se l'utente non specifica il conto si assume 'contanti' (caso d'uso tipico:
-"ho speso 20 euro per la frutta").
+Gestione familiare profilata: i conti hanno un intestatario (econ_def.CONTI):
+BancoPosta = famiglia (cointestato), PostePay/PayPal/Contanti per membro. Se
+l'utente non specifica il conto si assume i contanti del membro che scrive.
 """
 import json
 import sqlite3
 from datetime import date
 
+import config as cfg
 import econ_def
+import econ_import
 from econ_def import norm_conto
 import memory
 import mqtt_pub
 from memory import (
     add_transazione, get_saldo, get_saldi, riepilogo_spese,
     normalize_categoria, list_categorie, rename_categoria, merge_categoria,
-    reset_economia,
+    reset_economia, import_transazioni,
     set_budget, delete_budget, list_budget, get_budget_status,
     set_obiettivo, accantona, delete_obiettivo, get_obiettivi,
 )
 
 NAME = "economia"
+
+
+def _membro_from_user(user_id: str) -> str:
+    """Risolve il membro (nome minuscolo) dal user_id del parlante.
+    user_id = chat_id Telegram, o 'ha_chat_<chatid>' dal pannello web.
+    Fallback: primo membro in econ_def.MEMBRI."""
+    uid = (user_id or "").replace("ha_chat_", "").strip()
+    for u in cfg.get("users", []):
+        if str(u.get("chat_id", "")).strip() == uid:
+            nome = str(u.get("name", "")).strip().lower()
+            if nome in econ_def.MEMBRI:
+                return nome
+    return econ_def.MEMBRI[0] if econ_def.MEMBRI else "famiglia"
 
 _CONTI_DESC = ", ".join(econ_def.CONTI.keys())
 
@@ -77,6 +92,7 @@ TOOLS = [
                 "data_da": {"type": "string", "description": "Inizio periodo YYYY-MM-DD"},
                 "data_a": {"type": "string", "description": "Fine periodo YYYY-MM-DD"},
                 "conto": {"type": "string", "description": f"Limita a un conto ({_CONTI_DESC}); ometti per tutti"},
+                "intestatario": {"type": "string", "description": "Limita a un intestatario: andrea, marina o famiglia; ometti per tutti"},
             },
         },
     },
@@ -206,11 +222,11 @@ except Exception:
 
 async def handle(name: str, inputs: dict, user_id: str) -> str:
     if name == "add_transazione":
-        return await _add_transazione(inputs)
+        return await _add_transazione(inputs, user_id)
     if name == "get_saldo":
-        return await _get_saldo(inputs)
+        return await _get_saldo(inputs, user_id)
     if name == "riepilogo_spese":
-        return await _riepilogo_spese(inputs)
+        return await _riepilogo_spese(inputs, user_id)
     if name == "gestisci_categorie":
         return await _gestisci_categorie(inputs)
     if name == "reset_economia":
@@ -358,36 +374,47 @@ async def _gestisci_categorie(inputs: dict) -> str:
     return "Azione non valida: usa 'lista', 'rinomina' o 'unisci'."
 
 
-async def _get_saldo(inputs: dict) -> str:
+async def _get_saldo(inputs: dict, user_id: str = "") -> str:
+    membro = _membro_from_user(user_id)
     conto_raw = (inputs.get("conto") or "").strip()
     if conto_raw:
-        conto = norm_conto(conto_raw)
+        conto = norm_conto(conto_raw, membro)
         if conto is None:
             return f"Conto '{conto_raw}' non riconosciuto. Conti disponibili: {_CONTI_DESC}."
         saldo = await get_saldo(conto)
         return json.dumps({"ok": True, "conto": conto, "saldo": saldo}, ensure_ascii=False)
     saldi = await get_saldi()
     totale = round(sum(s["saldo"] for s in saldi), 2)
-    return json.dumps({"ok": True, "saldi": saldi, "totale": totale}, ensure_ascii=False)
+    per_membro = {}
+    for s in saldi:
+        per_membro[s["intestatario"]] = round(per_membro.get(s["intestatario"], 0.0) + s["saldo"], 2)
+    return json.dumps({"ok": True, "saldi": saldi, "per_intestatario": per_membro,
+                       "totale": totale}, ensure_ascii=False)
 
 
-async def _riepilogo_spese(inputs: dict) -> str:
+async def _riepilogo_spese(inputs: dict, user_id: str = "") -> str:
+    membro = _membro_from_user(user_id)
     conto_raw = (inputs.get("conto") or "").strip()
     conto = None
     if conto_raw:
-        conto = norm_conto(conto_raw)
+        conto = norm_conto(conto_raw, membro)
         if conto is None:
             return f"Conto '{conto_raw}' non riconosciuto. Conti disponibili: {_CONTI_DESC}."
+    intest = (inputs.get("intestatario") or "").strip().lower() or None
+    if intest and intest not in econ_def.MEMBRI and intest != "famiglia":
+        return f"Intestatario '{intest}' non valido. Membri: {', '.join(econ_def.MEMBRI)}, famiglia."
     data_da = (inputs.get("data_da") or "").strip() or None
     data_a = (inputs.get("data_a") or "").strip() or None
-    rep = await riepilogo_spese(data_da=data_da, data_a=data_a, conto=conto)
+    rep = await riepilogo_spese(data_da=data_da, data_a=data_a, conto=conto, intestatario=intest)
     rep["ok"] = True
     rep["conto"] = conto or "tutti"
+    rep["intestatario"] = intest or "tutti"
     rep["periodo"] = {"da": data_da or "inizio", "a": data_a or "oggi"}
     return json.dumps(rep, ensure_ascii=False)
 
 
-async def _add_transazione(inputs: dict) -> str:
+async def _add_transazione(inputs: dict, user_id: str = "") -> str:
+    membro = _membro_from_user(user_id)
     tipo = inputs.get("tipo")
     if tipo not in ("spesa", "entrata"):
         return "Tipo non valido: deve essere 'spesa' o 'entrata'."
@@ -406,7 +433,8 @@ async def _add_transazione(inputs: dict) -> str:
     descrizione = (inputs.get("descrizione") or "").strip()
 
     conto_raw = (inputs.get("conto") or "").strip()
-    conto = norm_conto(conto_raw) if conto_raw else "contanti"
+    # default: contanti del membro che scrive; altrimenti risolvi col contesto membro
+    conto = norm_conto(conto_raw, membro) if conto_raw else econ_def.conto_per("contanti", membro)
     if conto is None:
         return f"Conto '{conto_raw}' non riconosciuto. Conti disponibili: {_CONTI_DESC}."
 
@@ -433,6 +461,49 @@ async def _add_transazione(inputs: dict) -> str:
     }, ensure_ascii=False)
 
 
+async def import_estratto_bytes(content: bytes, filename: str, caption: str,
+                                user_id: str) -> str:
+    """Importa un estratto conto (xlsx/csv) inviato come documento. Riconosce
+    formato BancoPosta/Postepay, sceglie il conto (Postepay = per membro dedotto
+    da caption o dal parlante), inserisce con dedup. Ritorna testo per l'utente."""
+    try:
+        rows = econ_import.rows_from_file(content, filename)
+    except Exception as e:
+        return f"Non riesco a leggere il file ({filename}): {e}"
+    res = econ_import.parse(rows)
+    if res.get("formato") is None:
+        return ("File non riconosciuto come estratto BancoPosta o Postepay. "
+                + (res.get("errore") or ""))
+    formato = res["formato"]
+    movimenti = res["movimenti"]
+    if not movimenti:
+        return f"Estratto {formato} riconosciuto ma nessun movimento valido trovato."
+
+    if formato == "bancoposta":
+        conto = "bancoposta"
+    else:  # postepay: deduci il membro
+        cap = (caption or "").lower()
+        membro = next((m for m in econ_def.MEMBRI if m in cap), None) or _membro_from_user(user_id)
+        conto = econ_def.conto_per("postepay", membro) or f"postepay_{membro}"
+        if conto not in econ_def.CONTI:
+            return (f"Non so a quale PostePay assegnare l'estratto. Specifica il membro "
+                    f"nella didascalia (es. '{econ_def.MEMBRI[0]}').")
+
+    out = await import_transazioni(conto, movimenti)
+    mqtt_pub.request_economia_refresh()
+    saldo = await get_saldo(conto)
+    label = econ_def.label(conto)
+    scartate = res.get("scartate", 0)
+    msg = (f"📥 Import {formato} → {label}\n"
+           f"✅ {out['inserite']} movimenti importati\n")
+    if out["duplicate"]:
+        msg += f"♻️ {out['duplicate']} già presenti (saltati)\n"
+    if scartate:
+        msg += f"⚠️ {scartate} righe scartate (date/importi non validi)\n"
+    msg += f"💰 Saldo {label}: €{saldo:.2f}"
+    return msg
+
+
 def _categorie_sync() -> list[str]:
     """Lettura sync delle categorie per il prompt (dynamic_prompt e' sync).
     Usa sqlite3 in sola lettura su memory.DB_PATH; best-effort."""
@@ -448,11 +519,18 @@ def _categorie_sync() -> list[str]:
 
 
 def dynamic_prompt() -> str:
-    """Inietta le categorie esistenti così Claude riusa quelle invece di
-    inventarne di nuove (normalizzazione proattiva anti-doppioni)."""
+    """Inietta categorie + conti esistenti così Claude riusa categorie (anti-doppioni)
+    e sceglie il conto giusto per intestatario."""
+    out = []
     cats = _categorie_sync()
-    if not cats:
-        return ""
-    return ("\n- ECONOMIA categorie esistenti (riusa queste quando registri spese/entrate, "
-            "non crearne di simili: se serve una nuova davvero diversa va bene): "
-            + ", ".join(cats) + ".")
+    if cats:
+        out.append("\n- ECONOMIA categorie esistenti (riusa queste quando registri "
+                   "spese/entrate, non crearne di simili: se serve una nuova davvero "
+                   "diversa va bene): " + ", ".join(cats) + ".")
+    conti = ", ".join(f"{k} ({d['intestatario']})" for k, d in econ_def.CONTI.items())
+    out.append("\n- ECONOMIA conti (chiave → intestatario): " + conti + ". BancoPosta è "
+               "cointestato (famiglia); PostePay/PayPal/Contanti sono per persona. Quando "
+               "registri un movimento usa la chiave conto corretta; se l'utente non indica "
+               "il conto si usano i suoi contanti. Per i riepiloghi puoi filtrare per "
+               "'intestatario' (andrea/marina/famiglia) oltre che per conto.")
+    return "".join(out)

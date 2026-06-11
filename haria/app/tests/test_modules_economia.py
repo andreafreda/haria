@@ -12,7 +12,7 @@ async def test_add_transazione_spesa_default_contanti(db, monkeypatch):
     }, "u1")
     data = json.loads(out)
     assert data["ok"] is True
-    assert data["conto"] == "contanti"
+    assert data["conto"] == "contanti_andrea"
     assert data["importo"] == 20
     assert data["saldo_aggiornato"] == -20
 
@@ -89,16 +89,16 @@ def _wire(monkeypatch, db):
 
 async def test_get_saldo_conto_singolo(db, monkeypatch):
     _wire(monkeypatch, db)
-    await db.add_transazione("postepay", "2026-06-01", -5, "spesa", "caffe")
-    out = await economia.handle("get_saldo", {"conto": "postepay"}, "u1")
+    await db.add_transazione("postepay_andrea", "2026-06-01", -5, "spesa", "caffe")
+    out = await economia.handle("get_saldo", {"conto": "postepay_andrea"}, "u1")
     data = json.loads(out)
-    assert data["conto"] == "postepay"
+    assert data["conto"] == "postepay_andrea"
     assert data["saldo"] == -5
 
 
 async def test_get_saldo_tutti(db, monkeypatch):
     _wire(monkeypatch, db)
-    await db.add_transazione("contanti", "2026-06-01", -20, "spesa", "frutta")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -20, "spesa", "frutta")
     out = await economia.handle("get_saldo", {}, "u1")
     data = json.loads(out)
     assert "saldi" in data
@@ -113,7 +113,7 @@ async def test_get_saldo_conto_sconosciuto(db, monkeypatch):
 
 async def test_riepilogo_spese_tool(db, monkeypatch):
     _wire(monkeypatch, db)
-    await db.add_transazione("contanti", "2026-06-02", -200, "alimentari", "spesa")
+    await db.add_transazione("contanti_andrea", "2026-06-02", -200, "alimentari", "spesa")
     out = await economia.handle("riepilogo_spese", {
         "data_da": "2026-06-01", "data_a": "2026-06-30",
     }, "u1")
@@ -182,23 +182,23 @@ async def test_gestisci_categorie_azione_invalida(db, monkeypatch):
 
 async def test_reset_economia_anteprima_senza_confirm(db, monkeypatch):
     _wire(monkeypatch, db)
-    await db.add_transazione("contanti", "2026-06-01", -10, "alimentari", "x")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
     out = await economia.handle("reset_economia", {}, "u1")
     data = json.loads(out)
     assert data["ok"] is False
     assert data["conferma_richiesta"] is True
     # nulla cancellato
-    assert await db.get_saldo("contanti") == -10
+    assert await db.get_saldo("contanti_andrea") == -10
 
 
 async def test_reset_economia_confirm(db, monkeypatch):
     _wire(monkeypatch, db)
-    await db.add_transazione("contanti", "2026-06-01", -10, "alimentari", "x")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
     out = await economia.handle("reset_economia", {"confirm": True}, "u1")
     data = json.loads(out)
     assert data["ok"] is True
     assert data["transazioni_cancellate"] == 1
-    assert await db.get_saldo("contanti") == 0
+    assert await db.get_saldo("contanti_andrea") == 0
 
 
 async def test_set_budget_tool(db, monkeypatch):
@@ -230,7 +230,7 @@ async def test_get_budget_status_tool_default_mese(db, monkeypatch):
     from datetime import date
     oggi = date.today()
     await db.set_budget("alimentari", 300)
-    await db.add_transazione("contanti", oggi.isoformat(), -50, "alimentari", "x")
+    await db.add_transazione("contanti_andrea", oggi.isoformat(), -50, "alimentari", "x")
     out = await economia.handle("get_budget_status", {}, "u1")
     data = json.loads(out)
     assert data["ok"] is True
@@ -300,6 +300,74 @@ async def test_get_obiettivi_tool(db, monkeypatch):
     out = await economia.handle("get_obiettivi", {}, "u1")
     data = json.loads(out)
     assert data["obiettivi"][0]["perc"] == 25.0
+
+
+# ---- profilazione membri ----
+
+async def test_membro_from_user_fallback(db, monkeypatch):
+    # user_id non mappato -> primo membro (andrea)
+    assert economia._membro_from_user("sconosciuto") == "andrea"
+
+
+async def test_add_transazione_default_conto_per_membro(db, monkeypatch):
+    _wire(monkeypatch, db)
+    # speaker non mappato -> contanti_andrea
+    out = await economia.handle("add_transazione", {
+        "tipo": "spesa", "importo": 20, "categoria": "alimentari", "descrizione": "frutta",
+    }, "u1")
+    data = json.loads(out)
+    assert data["conto"] == "contanti_andrea"
+
+
+async def test_add_transazione_conto_esplicito_membro(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("add_transazione", {
+        "tipo": "spesa", "importo": 30, "categoria": "carburante",
+        "conto": "postepay_marina",
+    }, "u1")
+    data = json.loads(out)
+    assert data["conto"] == "postepay_marina"
+
+
+async def test_riepilogo_filtra_intestatario(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.add_transazione("contanti_andrea", "2026-06-01", -20, "alimentari", "x")
+    await db.add_transazione("contanti_marina", "2026-06-01", -50, "alimentari", "y")
+    out = await economia.handle("riepilogo_spese", {"intestatario": "marina"}, "u1")
+    data = json.loads(out)
+    assert data["uscite"] == -50
+    assert data["intestatario"] == "marina"
+
+
+async def test_riepilogo_intestatario_invalido(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("riepilogo_spese", {"intestatario": "pluto"}, "u1")
+    assert "non valido" in out
+
+
+async def test_get_saldo_per_intestatario(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.add_transazione("contanti_andrea", "2026-06-01", -20, "alimentari", "x")
+    await db.add_transazione("contanti_marina", "2026-06-01", -50, "alimentari", "y")
+    out = await economia.handle("get_saldo", {}, "u1")
+    data = json.loads(out)
+    assert data["per_intestatario"]["andrea"] == -20
+    assert data["per_intestatario"]["marina"] == -50
+
+
+async def test_import_estratto_bytes_postepay(db, monkeypatch):
+    _wire(monkeypatch, db)
+    import econ_import
+    # costruisci un csv postepay minimale
+    csv = ("Data Contabile;Data Valuta;Importo (euro);Descrizione operazioni\n"
+           "10/06/2026;10/06/2026;-12,50;GLOVO\n"
+           "11/06/2026;11/06/2026;-9,99;AMAZON\n")
+    out = await economia.import_estratto_bytes(csv.encode("utf-8"), "estratto.csv",
+                                               "marina", "u1")
+    assert "Postepay Marina" in out or "PostePay Marina" in out
+    assert "2 movimenti importati" in out
+    saldo = await db.get_saldo("postepay_marina")
+    assert saldo == round(-12.50 - 9.99, 2)
 
 
 async def test_dynamic_prompt_include_categorie(db):
