@@ -18,9 +18,11 @@ import mqtt_pub
 from memory import (
     add_transazione, get_saldo, get_saldi, riepilogo_spese,
     normalize_categoria, list_categorie, rename_categoria, merge_categoria,
-    reset_economia, import_transazioni,
+    delete_categoria, reset_economia, import_transazioni,
     set_budget, delete_budget, list_budget, get_budget_status,
     set_obiettivo, accantona, delete_obiettivo, get_obiettivi,
+    list_conti, add_conto, update_conto, delete_conto,
+    list_transazioni, update_transazione, delete_transazione,
 )
 
 NAME = "economia"
@@ -108,9 +110,10 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "azione": {"type": "string", "enum": ["lista", "rinomina", "unisci"], "description": "lista = mostra tutte; rinomina = cambia nome; unisci = fonde due categorie"},
+                "azione": {"type": "string", "enum": ["lista", "crea", "rinomina", "unisci", "elimina"], "description": "lista; crea (nuova categoria); rinomina; unisci (fonde due); elimina (solo se non usata)"},
                 "da": {"type": "string", "description": "Per rinomina/unisci: categoria sorgente"},
                 "a": {"type": "string", "description": "Per rinomina/unisci: nuovo nome / categoria destinazione"},
+                "nome": {"type": "string", "description": "Per crea/elimina: nome categoria"},
             },
             "required": ["azione"],
         },
@@ -210,6 +213,67 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "gestisci_conti",
+        "description": (
+            "Gestione conti (CRUD). Usa quando l'utente vuole vedere/creare/modificare/"
+            "disattivare/eliminare un conto (es. 'aggiungi conto Revolut di Marina', "
+            "'disattiva paypal marina', 'cambia saldo iniziale del bancoposta a 500', "
+            "'che conti ho?'). Un conto con transazioni non si elimina: disattivalo."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "azione": {"type": "string", "enum": ["lista", "crea", "modifica", "disattiva", "riattiva", "elimina"]},
+                "nome": {"type": "string", "description": "Chiave conto (es. revolut_marina, postepay_andrea)"},
+                "tipo": {"type": "string", "description": "banca|carta|wallet|contanti (per crea/modifica)"},
+                "intestatario": {"type": "string", "description": "andrea|marina|famiglia (per crea/modifica)"},
+                "saldo_iniziale": {"type": "number", "description": "Saldo iniziale € (per crea/modifica)"},
+                "nuovo_nome": {"type": "string", "description": "Nuovo nome conto (per modifica/rinomina)"},
+            },
+            "required": ["azione"],
+        },
+    },
+    {
+        "name": "gestisci_transazioni",
+        "description": (
+            "Gestione movimenti (lista/modifica/elimina). Usa per correggere o "
+            "cancellare una transazione già registrata (es. 'elimina l'ultima spesa', "
+            "'correggi la spesa #12 a 25 euro', 'mostrami le ultime spese'). "
+            "Per CREARE un movimento usa invece add_transazione."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "azione": {"type": "string", "enum": ["lista", "modifica", "elimina"]},
+                "id": {"type": "integer", "description": "ID transazione (per modifica/elimina)"},
+                "conto": {"type": "string", "description": "Filtro/nuovo conto"},
+                "categoria": {"type": "string", "description": "Filtro/nuova categoria"},
+                "importo": {"type": "number", "description": "Nuovo importo firmato (per modifica)"},
+                "data": {"type": "string", "description": "Filtro/nuova data YYYY-MM-DD"},
+                "data_da": {"type": "string", "description": "Lista: inizio periodo YYYY-MM-DD"},
+                "data_a": {"type": "string", "description": "Lista: fine periodo YYYY-MM-DD"},
+                "descrizione": {"type": "string", "description": "Nuova descrizione (per modifica)"},
+                "limit": {"type": "integer", "description": "Lista: max righe (default 20)"},
+            },
+            "required": ["azione"],
+        },
+    },
+    {
+        "name": "gestisci_obiettivi",
+        "description": (
+            "Gestione salvadanai oltre a crea/versa: usa per ELIMINARLI o vederli. "
+            "(Per crearli/aggiornarli usa set_obiettivo; per versare usa accantona.)"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "azione": {"type": "string", "enum": ["lista", "elimina"]},
+                "nome": {"type": "string", "description": "Nome obiettivo (per elimina)"},
+            },
+            "required": ["azione"],
+        },
+    },
 ]
 
 PROMPT = ""
@@ -241,7 +305,114 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         return await _accantona(inputs)
     if name == "get_obiettivi":
         return await _get_obiettivi(inputs)
+    if name == "gestisci_conti":
+        return await _gestisci_conti(inputs, user_id)
+    if name == "gestisci_transazioni":
+        return await _gestisci_transazioni(inputs, user_id)
+    if name == "gestisci_obiettivi":
+        return await _gestisci_obiettivi(inputs)
     return f"Tool sconosciuto nel modulo {NAME}: {name}"
+
+
+async def _gestisci_conti(inputs: dict, user_id: str = "") -> str:
+    azione = (inputs.get("azione") or "").strip().lower()
+    if azione == "lista":
+        return json.dumps({"ok": True, "conti": await list_conti(solo_attivi=False)},
+                          ensure_ascii=False)
+    nome = (inputs.get("nome") or "").strip().lower()
+    if azione == "crea":
+        if not nome:
+            return "Nome conto mancante."
+        tipo = (inputs.get("tipo") or "altro").strip().lower()
+        intest = (inputs.get("intestatario") or "famiglia").strip().lower()
+        saldo = inputs.get("saldo_iniziale")
+        cid = await add_conto(nome, tipo, float(saldo) if saldo is not None else 0.0, intest)
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": True, "azione": "crea", "nome": nome, "id": cid}, ensure_ascii=False)
+    if not nome:
+        return "Nome conto mancante."
+    if azione == "disattiva":
+        ok = await update_conto(nome, attivo=False)
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": ok, "azione": "disattiva", "nome": nome}, ensure_ascii=False)
+    if azione == "riattiva":
+        ok = await update_conto(nome, attivo=True)
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": ok, "azione": "riattiva", "nome": nome}, ensure_ascii=False)
+    if azione == "modifica":
+        kw = {}
+        if inputs.get("tipo"): kw["tipo"] = inputs["tipo"].strip().lower()
+        if inputs.get("intestatario"): kw["intestatario"] = inputs["intestatario"].strip().lower()
+        if inputs.get("saldo_iniziale") is not None: kw["saldo_iniziale"] = float(inputs["saldo_iniziale"])
+        if inputs.get("nuovo_nome"): kw["nuovo_nome"] = inputs["nuovo_nome"].strip().lower()
+        if not kw:
+            return "Niente da modificare (passa tipo/intestatario/saldo_iniziale/nuovo_nome)."
+        ok = await update_conto(nome, **kw)
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": ok, "azione": "modifica", "nome": nome, "campi": list(kw)}, ensure_ascii=False)
+    if azione == "elimina":
+        res = await delete_conto(nome)
+        mqtt_pub.request_economia_refresh()
+        if res.get("in_uso"):
+            return (f"Conto '{nome}' ha {res['transazioni']} transazioni: non lo elimino. "
+                    "Disattivalo invece (azione disattiva).")
+        if not res.get("trovato", True) and not res.get("ok"):
+            return f"Conto '{nome}' non trovato."
+        return json.dumps({"ok": True, "azione": "elimina", "nome": nome}, ensure_ascii=False)
+    return "Azione non valida: lista/crea/modifica/disattiva/riattiva/elimina."
+
+
+async def _gestisci_transazioni(inputs: dict, user_id: str = "") -> str:
+    azione = (inputs.get("azione") or "").strip().lower()
+    membro = _membro_from_user(user_id)
+    if azione == "lista":
+        conto = norm_conto(inputs["conto"], membro) if inputs.get("conto") else None
+        righe = await list_transazioni(
+            conto=conto,
+            data_da=(inputs.get("data_da") or None),
+            data_a=(inputs.get("data_a") or None),
+            categoria=(inputs.get("categoria") or None),
+            limit=int(inputs.get("limit") or 20),
+        )
+        return json.dumps({"ok": True, "transazioni": righe}, ensure_ascii=False)
+    tid = inputs.get("id")
+    if tid is None:
+        return "Serve l'id della transazione."
+    if azione == "elimina":
+        ok = await delete_transazione(int(tid))
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": ok, "azione": "elimina", "id": tid}, ensure_ascii=False)
+    if azione == "modifica":
+        kw = {}
+        if inputs.get("data"): kw["data"] = inputs["data"].strip()
+        if inputs.get("importo") is not None: kw["importo"] = float(inputs["importo"])
+        if inputs.get("categoria"): kw["categoria"] = await normalize_categoria(inputs["categoria"])
+        if inputs.get("descrizione") is not None: kw["descrizione"] = inputs["descrizione"].strip()
+        if inputs.get("conto"):
+            c = norm_conto(inputs["conto"], membro)
+            if c is None:
+                return f"Conto '{inputs['conto']}' non riconosciuto."
+            kw["conto"] = c
+        if not kw:
+            return "Niente da modificare."
+        ok = await update_transazione(int(tid), **kw)
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": ok, "azione": "modifica", "id": tid, "campi": list(kw)}, ensure_ascii=False)
+    return "Azione non valida: lista/modifica/elimina."
+
+
+async def _gestisci_obiettivi(inputs: dict) -> str:
+    azione = (inputs.get("azione") or "").strip().lower()
+    if azione == "lista":
+        return await _get_obiettivi(inputs)
+    if azione == "elimina":
+        nome = (inputs.get("nome") or "").strip()
+        if not nome:
+            return "Nome obiettivo mancante."
+        ok = await delete_obiettivo(nome)
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": ok, "azione": "elimina", "nome": nome}, ensure_ascii=False)
+    return "Azione non valida: lista/elimina."
 
 
 async def _set_obiettivo(inputs: dict) -> str:
@@ -355,6 +526,23 @@ async def _gestisci_categorie(inputs: dict) -> str:
     if azione == "lista":
         cats = await list_categorie()
         return json.dumps({"ok": True, "categorie": cats}, ensure_ascii=False)
+    if azione == "crea":
+        nome = (inputs.get("nome") or "").strip()
+        if not nome:
+            return "Nome categoria mancante."
+        canon = await normalize_categoria(nome)
+        return json.dumps({"ok": True, "azione": "crea", "categoria": canon}, ensure_ascii=False)
+    if azione == "elimina":
+        nome = (inputs.get("nome") or "").strip()
+        if not nome:
+            return "Nome categoria mancante."
+        res = await delete_categoria(nome)
+        if res.get("in_uso"):
+            return (f"Categoria '{nome}' usata da {res['transazioni']} transazioni: "
+                    "non la elimino. Uniscila a un'altra (azione unisci) prima.")
+        if not res.get("ok"):
+            return f"Categoria '{nome}' non trovata."
+        return json.dumps({"ok": True, "azione": "elimina", "categoria": nome.lower()}, ensure_ascii=False)
     da = (inputs.get("da") or "").strip()
     a = (inputs.get("a") or "").strip()
     if azione == "rinomina":

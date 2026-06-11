@@ -1540,6 +1540,52 @@ async def add_conto(nome: str, tipo: str, saldo_iniziale: float = 0.0,
         return (await cursor.fetchone())[0]
 
 
+async def update_conto(nome: str, *, nuovo_nome: str | None = None,
+                       tipo: str | None = None, intestatario: str | None = None,
+                       saldo_iniziale: float | None = None,
+                       attivo: bool | None = None) -> bool:
+    """Aggiorna i campi forniti di un conto (gli altri restano invariati).
+    False se il conto non esiste."""
+    sets, params = [], []
+    if nuovo_nome is not None:
+        sets.append("nome=?"); params.append(nuovo_nome.strip())
+    if tipo is not None:
+        sets.append("tipo=?"); params.append(tipo)
+    if intestatario is not None:
+        sets.append("intestatario=?"); params.append(intestatario)
+    if saldo_iniziale is not None:
+        sets.append("saldo_iniziale=?"); params.append(float(saldo_iniziale))
+    if attivo is not None:
+        sets.append("attivo=?"); params.append(1 if attivo else 0)
+    if not sets:
+        return False
+    params.append(nome)
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            f"UPDATE econ_conti SET {', '.join(sets)} WHERE nome=?", params
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_conto(nome: str) -> dict:
+    """Elimina un conto. Se ha transazioni NON cancella (ritorna in_uso=True):
+    usare update_conto(attivo=False) per disattivarlo invece di perdere i dati."""
+    conto_row = await get_conto(nome)
+    if conto_row is None:
+        return {"ok": False, "trovato": False}
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT count(*) FROM econ_transazioni WHERE conto_id=?", (conto_row["id"],)
+        )
+        n = (await cur.fetchone())[0]
+        if n > 0:
+            return {"ok": False, "in_uso": True, "transazioni": n}
+        await db.execute("DELETE FROM econ_conti WHERE id=?", (conto_row["id"],))
+        await db.commit()
+    return {"ok": True}
+
+
 async def add_transazione(conto: str, data: str, importo: float,
                            categoria: str, descrizione: str = "") -> int:
     """Registra movimento. importo firmato: + entrata, - uscita."""
@@ -1605,6 +1651,37 @@ async def delete_transazione(transazione_id: int) -> bool:
         cursor = await db.execute("DELETE FROM econ_transazioni WHERE id=?", (transazione_id,))
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def update_transazione(transazione_id: int, *, data: str | None = None,
+                             importo: float | None = None, categoria: str | None = None,
+                             descrizione: str | None = None,
+                             conto: str | None = None) -> bool:
+    """Aggiorna i campi forniti di una transazione. False se l'id non esiste
+    o il conto indicato è sconosciuto."""
+    sets, params = [], []
+    if data is not None:
+        sets.append("data=?"); params.append(data)
+    if importo is not None:
+        sets.append("importo=?"); params.append(float(importo))
+    if categoria is not None:
+        sets.append("categoria=?"); params.append(categoria)
+    if descrizione is not None:
+        sets.append("descrizione=?"); params.append(descrizione)
+    if conto is not None:
+        cr = await get_conto(conto)
+        if cr is None:
+            return False
+        sets.append("conto_id=?"); params.append(cr["id"])
+    if not sets:
+        return False
+    params.append(int(transazione_id))
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            f"UPDATE econ_transazioni SET {', '.join(sets)} WHERE id=?", params
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 async def import_transazioni(conto: str, movimenti: list[dict]) -> dict:
@@ -1677,6 +1754,29 @@ async def normalize_categoria(nome: str) -> str:
         )
         row = await cursor.fetchone()
         return row[0] if row else canon
+
+
+async def delete_categoria(nome: str) -> dict:
+    """Elimina una categoria. Se è usata da transazioni NON cancella
+    (ritorna in_uso + conteggio): usare rename/merge per spostarle prima."""
+    cat = (nome or "").strip()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (cat,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return {"ok": False, "trovato": False}
+        canon = row[0]
+        cur = await db.execute(
+            "SELECT count(*) FROM econ_transazioni WHERE categoria=?", (canon,)
+        )
+        n = (await cur.fetchone())[0]
+        if n > 0:
+            return {"ok": False, "in_uso": True, "transazioni": n}
+        await db.execute("DELETE FROM econ_categorie WHERE nome=?", (canon,))
+        await db.commit()
+    return {"ok": True}
 
 
 async def rename_categoria(old: str, new: str) -> bool:

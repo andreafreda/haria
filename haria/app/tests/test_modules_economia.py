@@ -85,6 +85,14 @@ def _wire(monkeypatch, db):
     monkeypatch.setattr(economia, "accantona", db.accantona)
     monkeypatch.setattr(economia, "delete_obiettivo", db.delete_obiettivo)
     monkeypatch.setattr(economia, "get_obiettivi", db.get_obiettivi)
+    monkeypatch.setattr(economia, "delete_categoria", db.delete_categoria)
+    monkeypatch.setattr(economia, "list_conti", db.list_conti)
+    monkeypatch.setattr(economia, "add_conto", db.add_conto)
+    monkeypatch.setattr(economia, "update_conto", db.update_conto)
+    monkeypatch.setattr(economia, "delete_conto", db.delete_conto)
+    monkeypatch.setattr(economia, "list_transazioni", db.list_transazioni)
+    monkeypatch.setattr(economia, "update_transazione", db.update_transazione)
+    monkeypatch.setattr(economia, "delete_transazione", db.delete_transazione)
 
 
 async def test_get_saldo_conto_singolo(db, monkeypatch):
@@ -353,6 +361,62 @@ async def test_get_saldo_per_intestatario(db, monkeypatch):
     data = json.loads(out)
     assert data["per_intestatario"]["andrea"] == -20
     assert data["per_intestatario"]["marina"] == -50
+
+
+async def test_gestisci_conti_lista_crea_disattiva(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("gestisci_conti", {"azione": "lista"}, "u1")
+    assert json.loads(out)["ok"] is True
+
+    out = await economia.handle("gestisci_conti", {"azione": "crea", "nome": "revolut_marina", "tipo": "carta", "intestatario": "marina", "saldo_iniziale": 100}, "u1")
+    assert json.loads(out)["azione"] == "crea"
+    assert (await db.get_conto("revolut_marina"))["saldo_iniziale"] == 100
+
+    out = await economia.handle("gestisci_conti", {"azione": "disattiva", "nome": "revolut_marina"}, "u1")
+    assert json.loads(out)["ok"] is True
+    assert "revolut_marina" not in [c["nome"] for c in await db.list_conti(solo_attivi=True)]
+
+
+async def test_gestisci_conti_elimina_in_uso(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    out = await economia.handle("gestisci_conti", {"azione": "elimina", "nome": "contanti_andrea"}, "u1")
+    assert "non lo elimino" in out
+
+
+async def test_gestisci_transazioni_modifica_elimina(db, monkeypatch):
+    _wire(monkeypatch, db)
+    tid = await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    out = await economia.handle("gestisci_transazioni", {"azione": "modifica", "id": tid, "importo": -30}, "u1")
+    assert json.loads(out)["ok"] is True
+    assert (await db.list_transazioni())[0]["importo"] == -30
+
+    out = await economia.handle("gestisci_transazioni", {"azione": "elimina", "id": tid}, "u1")
+    assert json.loads(out)["ok"] is True
+    assert await db.list_transazioni() == []
+
+
+async def test_gestisci_transazioni_lista(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    out = await economia.handle("gestisci_transazioni", {"azione": "lista"}, "u1")
+    assert len(json.loads(out)["transazioni"]) == 1
+
+
+async def test_gestisci_categorie_crea_elimina(db, monkeypatch):
+    _wire(monkeypatch, db)
+    out = await economia.handle("gestisci_categorie", {"azione": "crea", "nome": "Viaggi"}, "u1")
+    assert json.loads(out)["categoria"] == "viaggi"
+    out = await economia.handle("gestisci_categorie", {"azione": "elimina", "nome": "viaggi"}, "u1")
+    assert json.loads(out)["ok"] is True
+
+
+async def test_gestisci_obiettivi_elimina(db, monkeypatch):
+    _wire(monkeypatch, db)
+    await db.set_obiettivo("vacanze", 1000)
+    out = await economia.handle("gestisci_obiettivi", {"azione": "elimina", "nome": "vacanze"}, "u1")
+    assert json.loads(out)["ok"] is True
+    assert await db.get_obiettivi() == []
 
 
 async def test_import_estratto_bytes_postepay(db, monkeypatch):

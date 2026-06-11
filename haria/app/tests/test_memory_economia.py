@@ -506,3 +506,92 @@ async def test_anni_con_dati(db):
 
 async def test_anni_con_dati_vuoto(db):
     assert await db.anni_con_dati() == []
+
+
+# ---- CRUD conti / transazioni / categorie ----
+
+async def test_update_conto(db):
+    await db.add_conto("revolut", "carta", 10, "andrea")
+    assert await db.update_conto("revolut", saldo_iniziale=50, intestatario="marina") is True
+    c = await db.get_conto("revolut")
+    assert c["saldo_iniziale"] == 50
+    assert c["intestatario"] == "marina"
+
+
+async def test_update_conto_rinomina(db):
+    await db.add_conto("revolut", "carta")
+    assert await db.update_conto("revolut", nuovo_nome="revolut_andrea") is True
+    assert await db.get_conto("revolut") is None
+    assert await db.get_conto("revolut_andrea") is not None
+
+
+async def test_update_conto_inesistente(db):
+    assert await db.update_conto("boh", saldo_iniziale=1) is False
+
+
+async def test_update_conto_disattiva(db):
+    await db.add_conto("revolut", "carta")
+    await db.update_conto("revolut", attivo=False)
+    attivi = [c["nome"] for c in await db.list_conti(solo_attivi=True)]
+    assert "revolut" not in attivi
+    tutti = [c["nome"] for c in await db.list_conti(solo_attivi=False)]
+    assert "revolut" in tutti
+
+
+async def test_delete_conto_vuoto(db):
+    await db.add_conto("revolut", "carta")
+    res = await db.delete_conto("revolut")
+    assert res["ok"] is True
+    assert await db.get_conto("revolut") is None
+
+
+async def test_delete_conto_in_uso(db):
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    res = await db.delete_conto("contanti_andrea")
+    assert res["ok"] is False
+    assert res["in_uso"] is True
+    assert res["transazioni"] == 1
+
+
+async def test_delete_conto_inesistente(db):
+    res = await db.delete_conto("boh")
+    assert res["trovato"] is False
+
+
+async def test_update_transazione(db):
+    tid = await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    assert await db.update_transazione(tid, importo=-25, categoria="svago") is True
+    righe = await db.list_transazioni()
+    assert righe[0]["importo"] == -25
+    assert righe[0]["categoria"] == "svago"
+
+
+async def test_update_transazione_cambia_conto(db):
+    tid = await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    assert await db.update_transazione(tid, conto="postepay_andrea") is True
+    assert await db.get_saldo("contanti_andrea") == 0
+    assert await db.get_saldo("postepay_andrea") == -10
+
+
+async def test_update_transazione_conto_sconosciuto(db):
+    tid = await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    assert await db.update_transazione(tid, conto="boh") is False
+
+
+async def test_delete_categoria_non_usata(db):
+    await db.normalize_categoria("temporanea")
+    res = await db.delete_categoria("Temporanea")
+    assert res["ok"] is True
+    assert "temporanea" not in await db.list_categorie()
+
+
+async def test_delete_categoria_in_uso(db):
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "alimentari", "x")
+    res = await db.delete_categoria("alimentari")
+    assert res["ok"] is False
+    assert res["in_uso"] is True
+
+
+async def test_delete_categoria_inesistente(db):
+    res = await db.delete_categoria("boh")
+    assert res["trovato"] is False
