@@ -53,12 +53,12 @@ Ordine consigliato: **9 → 11 → 8 → 12 → 10** (valore prima; 10 per ultim
     Importo NON firmato (2 colonne) → normalizzare a importo firmato unico.
   - `ListaMovimenti (1).xlsx` Postepay (1094 righe, ~2 anni). Header riga 2:
     `Data Contabile | Data Valuta | Importo (euro) | Descrizione operazioni`. Importo già firmato.
-- **Analisi chiave**: prelievi contanti BancoPosta ~-11.700€/anno (buco nero non tracciato,
-  probabile causa "non arriviamo a fine mese"); delivery cibo Postepay ~104€/mese.
+- **Analisi chiave** (dai campioni reali, cifre NON riportate qui per privacy): la voce
+  di uscita maggiore su BancoPosta sono i **prelievi contanti** (probabile causa
+  "non arriviamo a fine mese", denaro non tracciato); rilevante anche il delivery cibo su Postepay.
 - **Gap noto**: "RICARICA POSTEPAY" su BancoPosta = trasferimento interno BancoPosta→Postepay,
-  NON spesa → serve gestione "trasferimento" per non doppio-conteggiare (valutare in kata 9).
-- **Saldi reali** (baseline se serve): BancoPosta saldo disponibile +58,20€; Postepay dal campione.
-  Attualmente i conti partono da `saldo_iniziale=0` (nessun import fatto).
+  NON spesa → categoria `trasferimento` (già gestita in econ_import) per non doppio-conteggiare.
+- I conti partono da `saldo_iniziale=0`; l'import porta lo storico reale.
 
 ## Deploy (procedura, da memoria progetto)
 1. bump `haria/config.yaml` `version:`

@@ -403,10 +403,13 @@ La versione è in `haria/config.yaml` (`version:`), va bumpata a ogni release.
 
 **Modulo `economia`** (sviluppo incrementale — vedi `docs/economia-domestica-analisi.md`
 e stato dettagliato in `docs/economia-stato.md`)
-- ✅ Kata 1-7: conti + transazioni + categorie (dedup), query/riepilogo, budget per
-  categoria, salvadanai/obiettivi, dashboard MQTT. + reset distruttivo.
-- ⏳ Kata 8-12: promemoria export Poste, import CSV BancoPosta/Postepay, integrazione
-  PayPal (OAuth2), report mensili proattivi, hardening.
+- ✅ Fatto: conti + transazioni + categorie (dedup), query/riepilogo, budget per
+  categoria, salvadanai/obiettivi, dashboard MQTT, **profilazione per intestatario**
+  (conti per membro / cointestati famiglia), **import estratti** xlsx/csv
+  BancoPosta/Postepay (dedup hash), **frontend** (pagina pannello `/economia` +
+  dashboard Lovelace), reset distruttivo.
+- ⏳ Da fare: promemoria periodico export Poste, report mensili proattivi, hardening.
+- ❌ Fuori scope: integrazione PayPal (uscite già catturate dagli estratti carte).
 
 **Piattaforma**
 - `ha_chat` → conversation agent nativo HA (Assist pipeline).
