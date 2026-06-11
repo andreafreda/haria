@@ -137,6 +137,27 @@ async def test_riepilogo_spese_solo_entrate(db):
     assert rep["per_categoria"] == []
 
 
+async def test_riepilogo_esclude_trasferimenti(db):
+    # trasferimenti interni fuori da entrate/uscite/netto, ma NEI saldi
+    await db.add_transazione("bancoposta", "2026-06-01", -100, "trasferimento", "ricarica postepay")
+    await db.add_transazione("postepay_andrea", "2026-06-01", 100, "trasferimento", "ricarica")
+    await db.add_transazione("contanti_andrea", "2026-06-02", -20, "alimentari", "frutta")
+    rep = await db.riepilogo_spese()
+    assert rep["uscite"] == -20      # il -100 trasferimento escluso
+    assert rep["entrate"] == 0       # il +100 trasferimento escluso
+    assert all(c["categoria"] != "trasferimento" for c in rep["per_categoria"])
+    # i saldi invece contano il trasferimento
+    assert await db.get_saldo("bancoposta") == -100
+    assert await db.get_saldo("postepay_andrea") == 100
+
+
+async def test_andamento_esclude_trasferimenti(db):
+    await db.add_transazione("bancoposta", "2026-03-01", -100, "trasferimento", "x")
+    await db.add_transazione("contanti_andrea", "2026-03-01", -30, "svago", "y")
+    mesi = await db.andamento_mensile(2026)
+    assert mesi[2]["uscite"] == 30   # marzo: solo lo svago
+
+
 async def test_riepilogo_spese_vuoto(db):
     rep = await db.riepilogo_spese()
     assert rep["entrate"] == 0

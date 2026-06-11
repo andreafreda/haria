@@ -2168,7 +2168,10 @@ async def riepilogo_spese(data_da: str | None = None, data_a: str | None = None,
                           conto: str | None = None, intestatario: str | None = None) -> dict:
     """Aggrega movimenti nel periodo: totale entrate/uscite/netto + breakdown
     spese per categoria (solo importi negativi). Filtri opz: conto, intestatario."""
-    where = "WHERE 1=1"
+    # esclude i trasferimenti INTERNI tra i propri conti (ricariche, P2P famiglia):
+    # non sono né reddito né spesa reale. I bonifici a terzi NON sono 'trasferimento'
+    # quindi restano contati. I saldi (get_saldi) invece li contano sempre.
+    where = "WHERE t.categoria!='trasferimento'"
     params: list = []
     if conto:
         where += " AND c.nome=?"
@@ -2210,7 +2213,7 @@ async def riepilogo_spese(data_da: str | None = None, data_a: str | None = None,
 
 async def andamento_mensile(year: int, intestatario: str | None = None) -> list[dict]:
     """Per i 12 mesi dell'anno: entrate, uscite, netto. Filtro opz intestatario."""
-    where = "WHERE t.data LIKE ?"
+    where = "WHERE t.data LIKE ? AND t.categoria!='trasferimento'"
     params: list = [f"{int(year):04d}-%"]
     if intestatario:
         where += " AND c.intestatario=?"
@@ -2237,7 +2240,7 @@ async def andamento_mensile(year: int, intestatario: str | None = None) -> list[
 async def spese_categoria_anno(year: int, intestatario: str | None = None) -> list[dict]:
     """Spese (uscite) per categoria nell'anno: [{categoria, totale, mesi:[12]}],
     ordinato per totale decrescente. Filtro opz intestatario."""
-    where = "WHERE t.importo < 0 AND t.data LIKE ?"
+    where = "WHERE t.importo < 0 AND t.data LIKE ? AND t.categoria!='trasferimento'"
     params: list = [f"{int(year):04d}-%"]
     if intestatario:
         where += " AND c.intestatario=?"
