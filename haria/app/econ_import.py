@@ -198,7 +198,9 @@ def row_hash(conto: str, data: str, importo: float, descrizione: str) -> str:
 def rows_from_xlsx(content: bytes) -> list[list]:
     import io
     from openpyxl import load_workbook
-    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    # read_only=False: alcuni export Poste hanno dimensioni dichiarate non da A1
+    # (es. A2:E720) che in read_only mode fanno saltare la lettura delle righe.
+    wb = load_workbook(io.BytesIO(content), read_only=False, data_only=True)
     ws = wb.active
     rows = [list(r) for r in ws.iter_rows(values_only=True)]
     wb.close()
