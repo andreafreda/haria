@@ -715,9 +715,12 @@ async def _add_transazione(inputs: dict, user_id: str = "") -> str:
     else:
         data = date.today().isoformat()
 
-    # normalizza categoria: riusa una canonica esistente (case-insensitive),
-    # altrimenti la registra. Evita doppioni tipo "Cibo"/"cibo"/"alimentari".
-    categoria = await normalize_categoria(categoria)
+    # regole utente: se descrizione/categoria contengono una keyword nota,
+    # la regola vince (stessa logica dell'import). Altrimenti normalizza.
+    testo = f"{descrizione} {categoria}".lower()
+    regola_cat = next((r["categoria"] for r in await list_regole()
+                       if r["keyword"] in testo), None)
+    categoria = regola_cat or await normalize_categoria(categoria)
 
     importo_firmato = importo if tipo == "entrata" else -importo
     await add_transazione(conto, data, importo_firmato, categoria, descrizione)
@@ -793,6 +796,19 @@ def _categorie_sync() -> list[str]:
         return []
 
 
+def _regole_sync() -> list[tuple]:
+    """Regole keyword->categoria per il prompt (sync, best-effort)."""
+    try:
+        con = sqlite3.connect(memory.DB_PATH, timeout=2.0)
+        try:
+            rows = con.execute("SELECT keyword, categoria FROM econ_regole ORDER BY keyword").fetchall()
+        finally:
+            con.close()
+        return [(r[0], r[1]) for r in rows]
+    except Exception:
+        return []
+
+
 def dynamic_prompt() -> str:
     """Inietta categorie + conti esistenti così Claude riusa categorie (anti-doppioni)
     e sceglie il conto giusto per intestatario."""
@@ -808,4 +824,9 @@ def dynamic_prompt() -> str:
                "registri un movimento usa la chiave conto corretta; se l'utente non indica "
                "il conto si usano i suoi contanti. Per i riepiloghi puoi filtrare per "
                "'intestatario' (andrea/marina/famiglia) oltre che per conto.")
+    regole = _regole_sync()
+    if regole:
+        out.append("\n- ECONOMIA regole di categoria (se la descrizione/esercente "
+                   "contiene la keyword, usa quella categoria): "
+                   + "; ".join(f"{k}→{c}" for k, c in regole) + ".")
     return "".join(out)

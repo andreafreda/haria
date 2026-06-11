@@ -441,6 +441,18 @@ async def test_add_transazione_data_invalida(db, monkeypatch):
     assert await db.list_transazioni() == []
 
 
+async def test_add_transazione_applica_regola(db, monkeypatch):
+    # la regola vale anche per l'inserimento manuale via chat
+    _wire(monkeypatch, db)
+    monkeypatch.setattr(economia, "list_regole", db.list_regole)
+    await db.add_regola("baiano", "alimentari")
+    out = await economia.handle("add_transazione", {
+        "tipo": "spesa", "importo": 30, "categoria": "spesa", "descrizione": "baiano group",
+    }, "u1")
+    data = json.loads(out)
+    assert data["categoria"] == "alimentari"
+
+
 async def test_reset_anteprima_menziona_obiettivi(db, monkeypatch):
     # TASK 3: anteprima reset elenca i salvadanai
     _wire(monkeypatch, db)
