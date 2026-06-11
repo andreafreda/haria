@@ -412,6 +412,14 @@ def _month_bounds():
     return first.isoformat(), last.isoformat(), today.year, today.month
 
 
+def _prev_month_bounds():
+    """(primo_giorno, ultimo_giorno) del mese precedente, ISO."""
+    first = date.today().replace(day=1)
+    p_last = first - timedelta(days=1)
+    p_first = p_last.replace(day=1)
+    return p_first.isoformat(), p_last.isoformat()
+
+
 async def publish_economia():
     """Discovery + stato economia (device 'HARIA Economia').
 
@@ -464,11 +472,32 @@ async def publish_economia():
         object_id="economia_spese_mese",
     )
     # uscite e' negativo -> mostra valore assoluto speso
-    _pub(f"{_BASE_ECON}/spese_mese/state", round(-rep["uscite"], 2))
+    spese_mese = round(-rep["uscite"], 2)
+    _pub(f"{_BASE_ECON}/spese_mese/state", spese_mese)
     _pub(f"{_BASE_ECON}/spese_mese/attr", {
         "entrate": rep["entrate"], "uscite": rep["uscite"], "netto": rep["netto"],
         "per_categoria": {c["categoria"]: c["totale"] for c in rep["per_categoria"]},
     })
+
+    # --- confronto col mese precedente ---
+    p_first, p_last = _prev_month_bounds()
+    rep_prev = await riepilogo_spese(data_da=p_first, data_a=p_last)
+    spese_prec = round(-rep_prev["uscite"], 2)
+    delta = round(spese_mese - spese_prec, 2)
+    _disc_sensor(
+        "haria_econ_spese_mese_prec", "Spese mese scorso",
+        f"{_BASE_ECON}/spese_mese_prec", "€",
+        icon="mdi:cart-outline", device=_DEVICE_ECON,
+        object_id="economia_spese_mese_prec",
+    )
+    _pub(f"{_BASE_ECON}/spese_mese_prec", spese_prec)
+    _disc_sensor(
+        "haria_econ_spese_mese_delta", "Spese vs mese scorso",
+        f"{_BASE_ECON}/spese_mese_delta", "€",
+        icon="mdi:swap-vertical", device=_DEVICE_ECON,
+        object_id="economia_spese_mese_delta",
+    )
+    _pub(f"{_BASE_ECON}/spese_mese_delta", delta)
 
     # --- budget del mese per categoria ---
     for b in await get_budget_status(year, month):

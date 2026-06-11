@@ -79,6 +79,25 @@ async def test_publish_economia_budget(db, monkeypatch):
     assert "homeassistant/sensor/haria_econ_budget_alimentari/config" in fake.published
 
 
+async def test_publish_economia_confronto_mese_prec(db, monkeypatch):
+    fake = await _setup(monkeypatch)
+    from datetime import date, timedelta
+    oggi = date.today()
+    mese_corr = oggi.replace(day=1)
+    fine_prec = mese_corr - timedelta(days=1)
+    giorno_prec = fine_prec.replace(day=min(fine_prec.day, 15)).isoformat()
+    await db.add_transazione("contanti_andrea", oggi.isoformat(), -30, "alimentari", "ora")
+    await db.add_transazione("contanti_andrea", giorno_prec, -50, "alimentari", "scorso")
+
+    await mqtt_pub.publish_economia()
+
+    assert _decode(fake, "haria/economia/spese_mese/state") == 30.0
+    assert _decode(fake, "haria/economia/spese_mese_prec") == 50.0
+    assert _decode(fake, "haria/economia/spese_mese_delta") == -20.0
+    assert "homeassistant/sensor/haria_econ_spese_mese_prec/config" in fake.published
+    assert "homeassistant/sensor/haria_econ_spese_mese_delta/config" in fake.published
+
+
 async def test_publish_economia_obiettivi(db, monkeypatch):
     fake = await _setup(monkeypatch)
     await db.set_obiettivo("vacanze", 1000)
