@@ -390,7 +390,11 @@ async def publish_bollette():
     for util, d in _BOLL_UTILITIES.items():
         label = d["label"]
         for metric, icon, unit_label in _boll_metrics(util):
-            years = set(await get_bolletta_years(util, metric)) | {cur_year}
+            # range continuo (corrente-2 … corrente) + eventuali anni storici:
+            # garantisce che i sensori-anno mostrati dalla dashboard esistano
+            # sempre (zeri se senza dati), evitando "entity not available".
+            years = set(await get_bolletta_years(util, metric)) | {
+                cur_year, cur_year - 1, cur_year - 2}
             for year in sorted(years):
                 uid = f"haria_boll_{util}_{metric}_{year}"
                 topic = f"{_BASE_BOLL}/{util}/{metric}/{year}"
