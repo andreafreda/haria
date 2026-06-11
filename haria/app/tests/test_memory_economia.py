@@ -449,3 +449,60 @@ async def test_reset_cancella_obiettivi(db):
     res = await db.reset_economia()
     assert res["obiettivi_cancellati"] == 1
     assert await db.get_obiettivi() == []
+
+
+# ---- storico mensile / annuale ----
+
+async def test_andamento_mensile(db):
+    await db.add_transazione("contanti_andrea", "2026-01-15", -100, "alimentari", "")
+    await db.add_transazione("contanti_andrea", "2026-01-20", 500, "stipendio", "")
+    await db.add_transazione("contanti_andrea", "2026-03-10", -50, "svago", "")
+    # anno diverso -> escluso
+    await db.add_transazione("contanti_andrea", "2025-06-01", -999, "altro", "")
+
+    mesi = await db.andamento_mensile(2026)
+    assert len(mesi) == 12
+    gen = mesi[0]
+    assert gen["mese"] == 1
+    assert gen["entrate"] == 500
+    assert gen["uscite"] == 100
+    assert gen["netto"] == 400
+    assert mesi[2]["uscite"] == 50   # marzo
+    assert mesi[1]["uscite"] == 0    # febbraio vuoto
+
+
+async def test_andamento_mensile_filtro_intestatario(db):
+    await db.add_transazione("contanti_andrea", "2026-01-15", -100, "alimentari", "")
+    await db.add_transazione("contanti_marina", "2026-01-15", -40, "alimentari", "")
+    mesi = await db.andamento_mensile(2026, intestatario="marina")
+    assert mesi[0]["uscite"] == 40
+
+
+async def test_spese_categoria_anno(db):
+    await db.add_transazione("contanti_andrea", "2026-01-15", -100, "alimentari", "")
+    await db.add_transazione("contanti_andrea", "2026-02-10", -80, "alimentari", "")
+    await db.add_transazione("contanti_andrea", "2026-01-05", -200, "shopping", "")
+    await db.add_transazione("contanti_andrea", "2026-01-05", 999, "stipendio", "")  # entrata esclusa
+
+    spese = await db.spese_categoria_anno(2026)
+    # ordinato per totale desc: shopping 200, alimentari 180
+    assert spese[0]["categoria"] == "shopping"
+    assert spese[0]["totale"] == 200
+    assert spese[0]["mesi"][0] == 200   # gennaio
+    ali = spese[1]
+    assert ali["categoria"] == "alimentari"
+    assert ali["totale"] == 180
+    assert ali["mesi"][0] == 100   # gennaio
+    assert ali["mesi"][1] == 80    # febbraio
+    # stipendio (entrata) non presente
+    assert all(s["categoria"] != "stipendio" for s in spese)
+
+
+async def test_anni_con_dati(db):
+    await db.add_transazione("contanti_andrea", "2024-05-01", -10, "altro", "")
+    await db.add_transazione("contanti_andrea", "2026-01-01", -10, "altro", "")
+    assert await db.anni_con_dati() == [2024, 2026]
+
+
+async def test_anni_con_dati_vuoto(db):
+    assert await db.anni_con_dati() == []

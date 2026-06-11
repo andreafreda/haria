@@ -21,6 +21,7 @@ from memory import (
     get_active_briefings, add_briefing, update_briefing, deactivate_briefing,
     get_error_logs, clear_error_logs,
     get_saldi, riepilogo_spese, get_budget_status, get_obiettivi,
+    andamento_mensile, spese_categoria_anno,
 )
 from modules.food_diary import compute_macro_targets
 from modules import news
@@ -198,8 +199,79 @@ def _add_month(d: date, delta: int) -> date:
     return date(d.year + m // 12, m % 12 + 1, 1)
 
 
+_MESI_ABBR = ["", "Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
+              "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+
+
+def _econ_tabs(active: str) -> str:
+    def t(view, label):
+        on = "background:#3367d6;color:#fff" if view == active else ""
+        href = "./economia" if view == "mese" else "./economia?view=anno"
+        return f"<a href='{href}' style='padding:6px 14px;border-radius:8px;text-decoration:none;font-weight:600;{on}'>{label}</a>"
+    return f"<div style='display:flex;gap:8px;margin-bottom:14px'>{t('mese','📅 Mese')}{t('anno','📊 Anno')}</div>"
+
+
+async def _h_economia_anno(request):
+    import re
+    today = date.today()
+    q = request.query.get("y", "")
+    year = int(q) if re.match(r"^\d{4}$", q) else today.year
+
+    mesi = await andamento_mensile(year)
+    cats = await spese_categoria_anno(year)
+    tot_usc = round(sum(m["uscite"] for m in mesi), 2)
+    tot_ent = round(sum(m["entrate"] for m in mesi), 2)
+
+    body = "<h2>💰 Economia domestica</h2>" + _econ_tabs("anno")
+
+    # nav anno
+    nxt_off = "off" if year >= today.year else ""
+    body += "<div class='mnav'>"
+    body += f"<a href='./economia?view=anno&y={year-1}'>←</a>"
+    body += f"<span class='cur'>{year}</span>"
+    body += f"<a class='{nxt_off}' href='./economia?view=anno&y={year+1}'>→</a>"
+    body += "</div>"
+
+    body += "<div class='kpi'>"
+    body += f"<div class='k'><div class='v'>{_eur(tot_usc)}</div><div class='l'>Uscite anno</div></div>"
+    body += f"<div class='k'><div class='v'>{_eur(tot_ent)}</div><div class='l'>Entrate anno</div></div>"
+    body += f"<div class='k'><div class='v'>{_eur(round(tot_ent-tot_usc,2))}</div><div class='l'>Netto anno</div></div>"
+    body += "</div>"
+
+    # grafico 12 mesi (uscite)
+    body += "<div class='sec'>Uscite per mese</div>"
+    maxu = max((m["uscite"] for m in mesi), default=0) or 1
+    body += "<div class='chart'>"
+    for m in mesi:
+        h = round(m["uscite"] / maxu * 110)
+        lbl = f"€{m['uscite']:.0f}" if m["uscite"] else ""
+        body += (f"<div class='col'><div style='font-size:10px'>{lbl}</div>"
+                 f"<div class='bar' style='height:{h}px' title='{_MESI_ABBR[m['mese']]}: €{m['uscite']:.2f}'></div>"
+                 f"<div>{_MESI_ABBR[m['mese']]}</div></div>")
+    body += "</div>"
+
+    # categorie nell'anno
+    body += "<div class='sec'>Spese per categoria (anno)</div>"
+    if cats:
+        maxc = max(c["totale"] for c in cats) or 1
+        for c in cats:
+            w = round(c["totale"] / maxc * 100)
+            body += (
+                "<div class='brow'>"
+                f"<div class='top'><span class='cat'>{_e(c['categoria'])}</span>"
+                f"<span class='amt'>€{c['totale']:.2f}</span></div>"
+                f"<div class='bar2 b-neutral'><span style='width:{w}%'></span></div>"
+                "</div>")
+    else:
+        body += "<div class='card muted'>Nessuna spesa registrata nel {0}.</div>".format(year)
+
+    return _page("Economia", body)
+
+
 async def _h_economia(request):
     import re
+    if request.query.get("view") == "anno":
+        return await _h_economia_anno(request)
     today = date.today()
     cur_first = today.replace(day=1)
     q = request.query.get("m", "")
@@ -218,7 +290,7 @@ async def _h_economia(request):
     totale = round(sum(s["saldo"] for s in saldi), 2)
     obiettivi = await get_obiettivi()
 
-    body = "<h2>💰 Economia domestica</h2>"
+    body = "<h2>💰 Economia domestica</h2>" + _econ_tabs("mese")
 
     # navigazione mese (avanti nascosto se siamo nel mese corrente)
     next_off = "off" if first >= cur_first else ""

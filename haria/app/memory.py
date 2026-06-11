@@ -2010,3 +2010,65 @@ async def riepilogo_spese(data_da: str | None = None, data_a: str | None = None,
         "netto": round(entrate + uscite, 2),
         "per_categoria": cats,
     }
+
+
+async def andamento_mensile(year: int, intestatario: str | None = None) -> list[dict]:
+    """Per i 12 mesi dell'anno: entrate, uscite, netto. Filtro opz intestatario."""
+    where = "WHERE t.data LIKE ?"
+    params: list = [f"{int(year):04d}-%"]
+    if intestatario:
+        where += " AND c.intestatario=?"
+        params.append(intestatario)
+    out = [{"mese": m, "entrate": 0.0, "uscite": 0.0, "netto": 0.0} for m in range(1, 13)]
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            f"""SELECT CAST(substr(t.data, 6, 2) AS INTEGER) m,
+                       COALESCE(SUM(CASE WHEN t.importo > 0 THEN t.importo END), 0),
+                       COALESCE(SUM(CASE WHEN t.importo < 0 THEN -t.importo END), 0)
+                FROM econ_transazioni t JOIN econ_conti c ON c.id = t.conto_id
+                {where}
+                GROUP BY m""",
+            params,
+        )
+        for m, entr, usc in await cur.fetchall():
+            if 1 <= m <= 12:
+                out[m - 1]["entrate"] = round(float(entr), 2)
+                out[m - 1]["uscite"] = round(float(usc), 2)
+                out[m - 1]["netto"] = round(float(entr) - float(usc), 2)
+    return out
+
+
+async def spese_categoria_anno(year: int, intestatario: str | None = None) -> list[dict]:
+    """Spese (uscite) per categoria nell'anno: [{categoria, totale, mesi:[12]}],
+    ordinato per totale decrescente. Filtro opz intestatario."""
+    where = "WHERE t.importo < 0 AND t.data LIKE ?"
+    params: list = [f"{int(year):04d}-%"]
+    if intestatario:
+        where += " AND c.intestatario=?"
+        params.append(intestatario)
+    agg: dict = {}
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            f"""SELECT t.categoria, CAST(substr(t.data, 6, 2) AS INTEGER) m,
+                       SUM(-t.importo)
+                FROM econ_transazioni t JOIN econ_conti c ON c.id = t.conto_id
+                {where}
+                GROUP BY t.categoria, m""",
+            params,
+        )
+        for cat, m, tot in await cur.fetchall():
+            d = agg.setdefault(cat, {"categoria": cat, "totale": 0.0, "mesi": [0.0] * 12})
+            if 1 <= m <= 12:
+                d["mesi"][m - 1] = round(float(tot), 2)
+                d["totale"] = round(d["totale"] + float(tot), 2)
+    return sorted(agg.values(), key=lambda x: x["totale"], reverse=True)
+
+
+async def anni_con_dati() -> list[int]:
+    """Anni distinti con transazioni (per la navigazione storica)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT CAST(substr(data, 1, 4) AS INTEGER) y "
+            "FROM econ_transazioni ORDER BY y"
+        )
+        return [r[0] for r in await cur.fetchall()]
