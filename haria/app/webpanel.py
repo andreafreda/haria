@@ -20,6 +20,7 @@ from memory import (
     toggle_shopping_item, upsert_profile,
     get_active_briefings, add_briefing, update_briefing, deactivate_briefing,
     get_error_logs, clear_error_logs,
+    get_saldi, riepilogo_spese, get_budget_status, get_obiettivi,
 )
 from modules.food_diary import compute_macro_targets
 from modules import news
@@ -86,6 +87,14 @@ input[type=checkbox]{width:18px;height:18px;cursor:pointer}
 .bar{display:inline-block;background:#3367d6;border-radius:3px 3px 0 0;width:18px;vertical-align:bottom}
 .chart{display:flex;align-items:flex-end;gap:4px;height:120px;padding:8px 0}
 .chart .col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;font-size:10px;color:#888}
+.pbar{background:#e8edf5;border-radius:6px;height:16px;width:100%;overflow:hidden;margin-top:4px}
+.pbar > span{display:block;height:100%;background:#3367d6;border-radius:6px}
+.pbar.over > span{background:#c0392b}
+.kpi{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px}
+.kpi .k{background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 3px rgba(0,0,0,.1);min-width:120px}
+.kpi .k .v{font-size:22px;font-weight:700}
+.kpi .k .l{font-size:12px;color:#888}
+.pos{color:#39a845}.neg{color:#c0392b}
 """
 
 
@@ -94,7 +103,7 @@ def _page(title: str, body: str) -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA <span class="tagline">Home Assistant Reactive Intelligent Agent</span></header>
-<nav><a href="./">🏠 Home</a><a href="./chat">💬 Chat</a><a href="./briefings">📰 Notizie</a><span class="sep">Cibo</span><a href="./plan">🍽️ Piano</a><a href="./month">📅 Mese</a><a href="./diary">📖 Diario</a><a href="./profiles">👤 Profili</a><a href="./shopping">🛒 Spesa</a><a href="./pantry">📦 Dispensa</a><span class="sep">Sistema</span><a href="./logs">⚠️ Log</a><a href="./export.csv">⬇️ Export</a></nav>
+<nav><a href="./">🏠 Home</a><a href="./chat">💬 Chat</a><a href="./briefings">📰 Notizie</a><span class="sep">Cibo</span><a href="./plan">🍽️ Piano</a><a href="./month">📅 Mese</a><a href="./diary">📖 Diario</a><a href="./profiles">👤 Profili</a><a href="./shopping">🛒 Spesa</a><a href="./pantry">📦 Dispensa</a><span class="sep">Soldi</span><a href="./economia">💰 Economia</a><span class="sep">Sistema</span><a href="./logs">⚠️ Log</a><a href="./export.csv">⬇️ Export</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=page, content_type="text/html")
 
@@ -148,11 +157,103 @@ async def _h_home(request):
     body += _tile("./shopping", "🛒", "Spesa", "Lista della spesa")
     body += _tile("./pantry", "📦", "Dispensa", "Scorte")
     body += "</div>"
+    body += "<div class='sec'>Soldi</div><div class='grid'>"
+    body += _tile("./economia", "💰", "Economia", "Saldi, spese, budget, salvadanai")
+    body += "</div>"
     body += "<div class='sec'>Sistema</div><div class='grid'>"
     body += _tile("./logs", "⚠️", "Log", f"{len(errs)} errori recenti")
     body += _tile("./export.csv", "⬇️", "Export CSV", "Scarica il diario")
     body += "</div>"
     return _page("Home", body)
+
+
+def _eur(v) -> str:
+    cls = "pos" if v >= 0 else "neg"
+    return f"<span class='{cls}'>€{v:,.2f}</span>"
+
+
+async def _h_economia(request):
+    today = date.today()
+    first = today.replace(day=1)
+    nxt = first.replace(year=first.year + 1, month=1) if first.month == 12 \
+        else first.replace(month=first.month + 1)
+    last = nxt - timedelta(days=1)
+
+    saldi = await get_saldi()
+    totale = round(sum(s["saldo"] for s in saldi), 2)
+    per_int: dict = {}
+    for s in saldi:
+        per_int[s["intestatario"]] = round(per_int.get(s["intestatario"], 0.0) + s["saldo"], 2)
+    rep = await riepilogo_spese(data_da=first.isoformat(), data_a=last.isoformat())
+    budgets = await get_budget_status(today.year, today.month)
+    obiettivi = await get_obiettivi()
+
+    body = "<h2>💰 Economia domestica</h2>"
+
+    # KPI totali
+    body += "<div class='kpi'>"
+    body += f"<div class='k'><div class='v'>{_eur(totale)}</div><div class='l'>Saldo totale</div></div>"
+    body += f"<div class='k'><div class='v'>{_eur(rep['entrate'])}</div><div class='l'>Entrate mese</div></div>"
+    body += f"<div class='k'><div class='v'>{_eur(rep['uscite'])}</div><div class='l'>Uscite mese</div></div>"
+    body += f"<div class='k'><div class='v'>{_eur(rep['netto'])}</div><div class='l'>Netto mese</div></div>"
+    body += "</div>"
+
+    # saldi per persona
+    body += "<div class='sec'>Per persona</div><table><tr><th>Intestatario</th><th>Saldo</th></tr>"
+    for intest, val in sorted(per_int.items()):
+        body += f"<tr><td>{_e(intest.capitalize())}</td><td>{_eur(val)}</td></tr>"
+    body += "</table>"
+
+    # saldi conti
+    body += "<div class='sec'>Conti</div><table><tr><th>Conto</th><th>Intestatario</th><th>Saldo</th></tr>"
+    for s in saldi:
+        body += (f"<tr><td>{_e(s['conto'])}</td><td>{_e(s['intestatario'])}</td>"
+                 f"<td>{_eur(s['saldo'])}</td></tr>")
+    body += "</table>"
+
+    # spese per categoria (mese corrente)
+    body += f"<div class='sec'>Spese di {first.strftime('%m/%Y')} per categoria</div>"
+    if rep["per_categoria"]:
+        body += "<table><tr><th>Categoria</th><th>Speso</th></tr>"
+        for c in rep["per_categoria"]:
+            body += f"<tr><td>{_e(c['categoria'])}</td><td>{_eur(c['totale'])}</td></tr>"
+        body += "</table>"
+    else:
+        body += "<div class='card muted'>Nessuna spesa registrata questo mese.</div>"
+
+    # budget
+    body += "<div class='sec'>Budget del mese</div>"
+    if budgets:
+        for b in budgets:
+            perc = min(b["perc"], 100)
+            over = "over" if b["sforato"] else ""
+            body += ("<div class='card'>"
+                     f"<b>{_e(b['categoria'])}</b> — €{b['speso']:.2f} / €{b['budget']:.2f} "
+                     f"({b['perc']:.0f}%)"
+                     + ("  ⚠️ sforato" if b["sforato"] else "")
+                     + f"<div class='pbar {over}'><span style='width:{perc}%'></span></div></div>")
+    else:
+        body += "<div class='card muted'>Nessun budget impostato. Chiedi a HARIA: «budget di 300 al mese per alimentari».</div>"
+
+    # salvadanai
+    body += "<div class='sec'>Salvadanai / obiettivi</div>"
+    if obiettivi:
+        for o in obiettivi:
+            perc = min(o["perc"], 100)
+            extra = ""
+            if o["quota_mensile"]:
+                extra = f" · quota suggerita €{o['quota_mensile']:.2f}/mese"
+                if o["mesi_rimanenti"]:
+                    extra += f" ({o['mesi_rimanenti']} mesi)"
+            done = "  ✅" if o["raggiunto"] else ""
+            body += ("<div class='card'>"
+                     f"<b>{_e(o['nome'])}</b> — €{o['accantonato']:.2f} / €{o['target']:.2f} "
+                     f"({o['perc']:.0f}%){done}{_e(extra)}"
+                     f"<div class='pbar'><span style='width:{perc}%'></span></div></div>")
+    else:
+        body += "<div class='card muted'>Nessun salvadanaio. Chiedi a HARIA: «obiettivo 1000 euro per le vacanze».</div>"
+
+    return _page("Economia", body)
 
 
 async def _h_plan(request):
@@ -721,6 +822,7 @@ def build_web_app() -> web.Application:
     app.router.add_post("/api/shopping/toggle", _h_shopping_toggle)
     app.router.add_post("/api/profile/save", _h_profile_save)
     app.router.add_get("/pantry", _h_pantry)
+    app.router.add_get("/economia", _h_economia)
     app.router.add_get("/briefings", _h_briefings)
     app.router.add_post("/api/briefings/save", _h_briefings_save)
     app.router.add_post("/api/briefings/delete", _h_briefings_delete)
