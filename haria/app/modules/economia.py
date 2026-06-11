@@ -23,6 +23,7 @@ from memory import (
     set_obiettivo, accantona, delete_obiettivo, get_obiettivi,
     list_conti, add_conto, update_conto, delete_conto,
     list_transazioni, update_transazione, delete_transazione,
+    add_regola, delete_regola, list_regole, applica_regole,
 )
 
 NAME = "economia"
@@ -283,6 +284,26 @@ TOOLS = [
         },
     },
     {
+        "name": "gestisci_regole",
+        "description": (
+            "Regole di auto-categorizzazione: quando la descrizione di un movimento "
+            "(import) contiene una keyword, viene messo nella categoria scelta. Usa "
+            "quando l'utente dice 'tutti i X mettili in Y' (es. 'i baiano sono "
+            "alimentari', 'esselunga = alimentari'). azione: lista | aggiungi "
+            "{keyword, categoria} | elimina {keyword} | applica (ri-applica le regole "
+            "a tutti i movimenti già presenti)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "azione": {"type": "string", "enum": ["lista", "aggiungi", "elimina", "applica"]},
+                "keyword": {"type": "string", "description": "Testo da cercare nella descrizione (es. 'baiano')"},
+                "categoria": {"type": "string", "description": "Categoria di destinazione (per aggiungi)"},
+            },
+            "required": ["azione"],
+        },
+    },
+    {
         "name": "gestisci_obiettivi",
         "description": (
             "Gestione salvadanai oltre a crea/versa: usa per ELIMINARLI o vederli. "
@@ -334,7 +355,38 @@ async def handle(name: str, inputs: dict, user_id: str) -> str:
         return await _gestisci_transazioni(inputs, user_id)
     if name == "gestisci_obiettivi":
         return await _gestisci_obiettivi(inputs)
+    if name == "gestisci_regole":
+        return await _gestisci_regole(inputs)
     return f"Tool sconosciuto nel modulo {NAME}: {name}"
+
+
+async def _gestisci_regole(inputs: dict) -> str:
+    azione = (inputs.get("azione") or "").strip().lower()
+    if azione == "lista":
+        return json.dumps({"ok": True, "regole": await list_regole()}, ensure_ascii=False)
+    if azione == "applica":
+        res = await applica_regole()
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": True, "aggiornati": res}, ensure_ascii=False)
+    if azione == "aggiungi":
+        kw = (inputs.get("keyword") or "").strip()
+        cat = (inputs.get("categoria") or "").strip()
+        if not kw or not cat:
+            return "Servono keyword e categoria."
+        c = await add_regola(kw, cat)
+        # applica subito alle transazioni esistenti
+        res = await applica_regole()
+        mqtt_pub.request_economia_refresh()
+        return json.dumps({"ok": True, "azione": "aggiungi", "keyword": kw.lower(),
+                           "categoria": c, "aggiornati_esistenti": res.get(c, 0)},
+                          ensure_ascii=False)
+    if azione == "elimina":
+        kw = (inputs.get("keyword") or "").strip()
+        if not kw:
+            return "Serve la keyword."
+        ok = await delete_regola(kw)
+        return json.dumps({"ok": ok, "azione": "elimina", "keyword": kw.lower()}, ensure_ascii=False)
+    return "Azione non valida: lista/aggiungi/elimina/applica."
 
 
 async def _gestisci_conti(inputs: dict, user_id: str = "") -> str:

@@ -208,6 +208,11 @@ async def init_db():
                 importo REAL NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS econ_regole (
+                keyword TEXT PRIMARY KEY,
+                categoria TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS econ_obiettivi (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome TEXT NOT NULL UNIQUE,
@@ -1708,6 +1713,70 @@ async def update_transazione(transazione_id: int, *, data: str | None = None,
         return cur.rowcount > 0
 
 
+async def add_regola(keyword: str, categoria: str) -> str:
+    """Regola di categorizzazione: ogni movimento la cui descrizione contiene
+    `keyword` (case-insensitive) viene messo in `categoria` all'import."""
+    kw = (keyword or "").strip().lower()
+    cat = (categoria or "").strip().lower()
+    if not kw or not cat:
+        raise ValueError("keyword e categoria obbligatorie")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO econ_categorie (nome) VALUES (?)", (cat,))
+        await db.execute(
+            "INSERT INTO econ_regole (keyword, categoria) VALUES (?, ?) "
+            "ON CONFLICT(keyword) DO UPDATE SET categoria=excluded.categoria",
+            (kw, cat),
+        )
+        await db.commit()
+    return cat
+
+
+async def delete_regola(keyword: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM econ_regole WHERE keyword=?", ((keyword or "").strip().lower(),)
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def list_regole() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT keyword, categoria FROM econ_regole ORDER BY length(keyword) DESC"
+        )
+        return [{"keyword": r[0], "categoria": r[1]} for r in await cur.fetchall()]
+
+
+def _match_regola(descr: str, regole: list[dict]) -> str | None:
+    """Categoria della prima regola (keyword più lunga) contenuta in descr."""
+    d = (descr or "").lower()
+    for r in regole:  # già ordinate per keyword più lunga (più specifica)
+        if r["keyword"] in d:
+            return r["categoria"]
+    return None
+
+
+async def applica_regole() -> dict:
+    """Ri-applica le regole a TUTTE le transazioni esistenti. Ritorna conteggio
+    aggiornamenti per categoria."""
+    regole = await list_regole()
+    if not regole:
+        return {}
+    import collections
+    out = collections.Counter()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT id, descrizione, categoria FROM econ_transazioni")
+        rows = await cur.fetchall()
+        for tid, descr, cat in rows:
+            nuova = _match_regola(descr, regole)
+            if nuova and nuova != cat:
+                await db.execute("UPDATE econ_transazioni SET categoria=? WHERE id=?", (nuova, tid))
+                out[nuova] += 1
+        await db.commit()
+    return dict(out)
+
+
 async def import_transazioni(conto: str, movimenti: list[dict]) -> dict:
     """Bulk import movimenti da estratto. Ogni movimento: {data, importo,
     descrizione, categoria, hash}. Dedup via import_hash (per conto): reimportare
@@ -1716,6 +1785,7 @@ async def import_transazioni(conto: str, movimenti: list[dict]) -> dict:
     if conto_row is None:
         raise ValueError(f"conto sconosciuto: {conto}")
     cid = conto_row["id"]
+    regole = await list_regole()  # override categoria su keyword descrizione
     inserite = duplicate = 0
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -1731,7 +1801,9 @@ async def import_transazioni(conto: str, movimenti: list[dict]) -> dict:
                 continue
             if h:
                 existing.add(h)
-            cat = (m.get("categoria") or "altro").strip().lower()
+            # regola utente ha priorità sulla categoria dedotta dal parser
+            cat = (_match_regola(m.get("descrizione"), regole)
+                   or (m.get("categoria") or "altro").strip().lower())
             await db.execute(
                 "INSERT OR IGNORE INTO econ_categorie (nome) VALUES (?)", (cat,)
             )

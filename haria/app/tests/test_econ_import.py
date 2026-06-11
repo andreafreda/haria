@@ -150,6 +150,30 @@ def test_parse_righe_identiche_hash_diversi():
     assert h0 == econ_import.row_hash("postepay", "2026-06-10", -1.0, "CAFFE BAR")
 
 
+async def test_regole_override_import(db):
+    # regola baiano->alimentari applicata all'import
+    await db.add_regola("baiano", "alimentari")
+    movs = [{"data": "2026-06-01", "importo": -10.0, "descrizione": "POS BAIANO GROUP SRL",
+             "categoria": "altro", "hash": "h_baiano"}]
+    await db.import_transazioni("postepay_andrea", movs)
+    righe = await db.list_transazioni(conto="postepay_andrea")
+    assert righe[0]["categoria"] == "alimentari"
+
+
+async def test_applica_regole_esistenti(db):
+    await db.add_transazione("contanti_andrea", "2026-06-01", -10, "altro", "POS BAIANO GROUP")
+    await db.add_regola("baiano", "alimentari")
+    res = await db.applica_regole()
+    assert res.get("alimentari") == 1
+    assert (await db.list_transazioni(categoria="alimentari"))[0]["descrizione"] == "POS BAIANO GROUP"
+
+
+async def test_delete_regola(db):
+    await db.add_regola("baiano", "alimentari")
+    assert await db.delete_regola("Baiano") is True
+    assert await db.list_regole() == []
+
+
 async def test_import_righe_identiche_e_reimport(db):
     movs = econ_import.parse(_PP_DUP)["movimenti"]
     out1 = await db.import_transazioni("postepay_andrea", movs)
