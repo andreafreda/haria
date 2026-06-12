@@ -24,6 +24,7 @@ from memory import (
     list_conti, add_conto, update_conto, delete_conto,
     list_transazioni, update_transazione, delete_transazione,
     add_regola, delete_regola, list_regole, applica_regole, applica_regola,
+    CATEGORIA_TRASFERIMENTO,
 )
 
 NAME = "economia"
@@ -638,7 +639,7 @@ async def _gestisci_categorie(inputs: dict) -> str:
         return json.dumps({"ok": True, "azione": "elimina", "categoria": nome.lower()}, ensure_ascii=False)
     da = (inputs.get("da") or "").strip()
     a = (inputs.get("a") or "").strip()
-    if da.lower() == "trasferimento" and azione in ("rinomina", "unisci"):
+    if da.lower() == CATEGORIA_TRASFERIMENTO and azione in ("rinomina", "unisci"):
         return ("La categoria 'trasferimento' è di sistema: serve a escludere i "
                 "giroconti dai report, non si può rinominare/eliminare.")
     if azione == "rinomina":

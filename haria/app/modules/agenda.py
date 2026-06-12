@@ -352,12 +352,23 @@ PROMPT = prompts.get("module_agenda")
 
 # ---------- handlers ----------
 
+def _valid_iso(s: str) -> bool:
+    from datetime import datetime as _dt
+    try:
+        _dt.fromisoformat(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 async def _h_reminders(name: str, inputs: dict, user_id: str) -> str | None:
     if name == "set_reminder":
         remind_at = inputs.get("remind_at") or None
         recurring = inputs.get("recurring") or None
         if not remind_at and not recurring:
             return "Errore: specifica remind_at (one-shot) o recurring (cron)."
+        if remind_at and not _valid_iso(remind_at):
+            return "Errore: remind_at non è un datetime ISO valido (YYYY-MM-DDTHH:MM:SS)."
         r = await add_reminder(user_id, inputs["message"], remind_at, recurring)
         if not scheduler.schedule_reminder(r):
             await deactivate_reminder(r["id"], user_id)
@@ -374,6 +385,8 @@ async def _h_reminders(name: str, inputs: dict, user_id: str) -> str | None:
         return f"Promemoria #{inputs['id']} non trovato."
     if name == "update_reminder":
         rid = int(inputs["id"])
+        if inputs.get("remind_at") and not _valid_iso(inputs["remind_at"]):
+            return "Errore: remind_at non è un datetime ISO valido (YYYY-MM-DDTHH:MM:SS)."
         r = await _update_reminder(
             rid, user_id,
             message=inputs.get("message"),

@@ -9,6 +9,7 @@ notifica passa da ha_client.call_service, che a sua volta logga errori).
 """
 import asyncio
 import logging
+import time
 import traceback as _tb
 import config as cfg
 from memory import add_error_log
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 _loop = None
 _IGNORE = {__name__, "ha_client"}
+_last_notify: dict[tuple, float] = {}
+_THROTTLE_S = 600
 
 
 def _notify_target() -> tuple[str, str]:
@@ -35,6 +38,17 @@ async def _dispatch(source: str, message: str, tb: str):
         await add_error_log(source, "ERROR", message, tb)
     except Exception:
         pass
+    # throttle push: max 1 notifica per (source, message) ogni 10 min. Il log su
+    # DB resta sempre (serve a /logs); si throttla solo la notifica sul telefono.
+    key = (source, message[:120])
+    now = time.monotonic()
+    if now - _last_notify.get(key, 0) < _THROTTLE_S:
+        return
+    _last_notify[key] = now
+    if len(_last_notify) > 200:
+        cutoff = now - _THROTTLE_S
+        for k in [k for k, t in _last_notify.items() if t < cutoff]:
+            del _last_notify[k]
     try:
         dom, svc = _notify_target()
         short = message if len(message) <= 200 else message[:200] + "…"

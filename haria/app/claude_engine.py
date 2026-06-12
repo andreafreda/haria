@@ -211,10 +211,16 @@ async def _build_system(user_id: str, user_config: dict) -> list[dict]:
 
     cached = await get_entity_cache()
     if not cached:
-        await refresh_entity_cache()
-        cached = await get_entity_cache()
+        try:
+            await refresh_entity_cache()
+            cached = await get_entity_cache()
+        except Exception as e:
+            logger.warning("Entity cache non disponibile (HA giù?): %s", e)
+            cached = None
     if cached:
         base += f"\n\nENTITÀ DISPONIBILI (entity_id | nome):\n{cached}"
+    else:
+        base += "\n\n(Entità HA non disponibili al momento: Home Assistant non risponde.)"
     if context:
         base += f"\n\nContesto utente: {context}"
 
@@ -379,7 +385,11 @@ async def chat(user_id: str, user_text: str, user_config: dict,
 
     except RateLimitError:
         logger.error("Rate limit Anthropic (429) raggiunto per user %s dopo i retry SDK", user_id)
-        return "⚠️ Troppe richieste in poco tempo. Riprova tra un minuto."
+        msg = "⚠️ Troppe richieste in poco tempo. Riprova tra un minuto."
+        await save_turn(user_id, "assistant", msg)
+        return msg
     except anthropic.APIError as e:
         logger.error("Errore API Anthropic: %s", e)
-        return "Errore di comunicazione con l'AI. Riprova."
+        msg = "Errore di comunicazione con l'AI. Riprova."
+        await save_turn(user_id, "assistant", msg)
+        return msg

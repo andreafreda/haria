@@ -485,10 +485,13 @@ async def save_note(user_id: str, key: str, value: str):
             (user_id, key, value),
         )
         if _FTS_OK:
-            # rimuovi vecchie righe FTS della stessa nota (key) per evitare duplicati su update
+            # rimuovi vecchie righe FTS della stessa nota (key) per evitare duplicati su update.
+            # escape dei wildcard LIKE (%/_) nella key per non cancellare righe di altre note
+            safe_key = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             await db.execute(
-                "DELETE FROM memory_fts WHERE user_id = ? AND kind = 'note' AND content LIKE ?",
-                (user_id, f"{key}: %"),
+                "DELETE FROM memory_fts WHERE user_id = ? AND kind = 'note' "
+                "AND content LIKE ? ESCAPE '\\'",
+                (user_id, f"{safe_key}: %"),
             )
             await db.execute(
                 "INSERT INTO memory_fts (user_id, kind, content) VALUES (?, 'note', ?)",
@@ -1930,6 +1933,9 @@ async def rename_categoria(old: str, new: str) -> bool:
         await db.execute(
             "UPDATE econ_transazioni SET categoria=? WHERE categoria=?", (new, old_canon)
         )
+        await db.execute(
+            "UPDATE econ_regole SET categoria=? WHERE categoria=?", (new, old_canon)
+        )
         if exists:
             await db.execute("DELETE FROM econ_categorie WHERE nome=?", (old_canon,))
         else:
@@ -1966,6 +1972,9 @@ async def merge_categoria(src: str, dst: str) -> bool:
         dst_canon = (await cursor.fetchone())[0]
         await db.execute(
             "UPDATE econ_transazioni SET categoria=? WHERE categoria=?", (dst_canon, src_canon)
+        )
+        await db.execute(
+            "UPDATE econ_regole SET categoria=? WHERE categoria=?", (dst_canon, src_canon)
         )
         await db.execute("DELETE FROM econ_categorie WHERE nome=?", (src_canon,))
         await db.commit()

@@ -29,10 +29,11 @@ _DOW = {"0": "sun", "7": "sun", "1": "mon", "2": "tue", "3": "wed",
 
 
 def _conv_dow(field: str) -> str:
-    """Converte i numeri dow Unix in nomi APScheduler (gestisce *, liste, range)."""
+    """Converte i numeri dow Unix in nomi APScheduler (gestisce *, liste, range).
+    I numeri dopo '/' sono step e restano numerici (es. */2)."""
     if field == "*":
         return "*"
-    return re.sub(r"\d+", lambda m: _DOW.get(m.group(0), m.group(0)), field)
+    return re.sub(r"(?<![/\d])\d+", lambda m: _DOW.get(m.group(0), m.group(0)), field)
 
 
 def _cron_trigger(expr: str) -> CronTrigger:
@@ -76,7 +77,11 @@ def _schedule_one(r: dict) -> bool:
             logger.warning("Cron non valido per promemoria %s: %s", rid, e)
             return False
     else:
-        when = datetime.fromisoformat(r["remind_at"])
+        try:
+            when = datetime.fromisoformat(r["remind_at"])
+        except (ValueError, TypeError) as e:
+            logger.warning("remind_at non valido per promemoria %s: %s", rid, e)
+            return False
         if when <= datetime.now():
             return False
         trigger = DateTrigger(run_date=when)
@@ -93,8 +98,11 @@ async def start(bot):
     _scheduler = AsyncIOScheduler()
     loaded = 0
     for r in await get_active_reminders():
-        if _schedule_one(r):
-            loaded += 1
+        try:
+            if _schedule_one(r):
+                loaded += 1
+        except Exception as e:
+            logger.error("Promemoria %s non schedulabile (ignorato): %s", r.get("id"), e)
     _scheduler.start()
     logger.info("Scheduler avviato: %d promemoria caricati.", loaded)
 
@@ -160,8 +168,11 @@ async def load_briefings():
         return
     n = 0
     for b in await get_active_briefings():
-        if _schedule_briefing_one(b):
-            n += 1
+        try:
+            if _schedule_briefing_one(b):
+                n += 1
+        except Exception as e:
+            logger.error("Briefing %s non schedulabile (ignorato): %s", b.get("id"), e)
     logger.info("Briefing caricati: %d.", n)
 
 

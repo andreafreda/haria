@@ -123,8 +123,27 @@ def _slugify(s: str) -> str:
     return s or "dieta"
 
 
+_diets_cache: tuple | None = None  # (signature, contenuto)
+
+
 def load_diets() -> str:
-    """Concatena il contenuto di tutte le diete di riferimento trovate."""
+    """Concatena il contenuto di tutte le diete di riferimento trovate.
+    Cache invalidata su mtime/lista file (le glob/getmtime restano, si evita
+    solo la rilettura dei contenuti a ogni messaggio)."""
+    global _diets_cache
+    sig = []
+    for d in _DIET_DIRS:
+        if not d or not os.path.isdir(d):
+            continue
+        for ext in _DIET_EXTS:
+            for f in glob.glob(os.path.join(d, ext)):
+                try:
+                    sig.append((f, os.path.getmtime(f)))
+                except OSError:
+                    continue
+    sig = tuple(sorted(sig))
+    if _diets_cache and _diets_cache[0] == sig:
+        return _diets_cache[1]
     parts: list[str] = []
     seen: set[str] = set()
     for d in _DIET_DIRS:
@@ -143,7 +162,9 @@ def load_diets() -> str:
                     parts.append(f"### {base}\n{txt}")
             except OSError:
                 continue
-    return "\n\n".join(parts)
+    result = "\n\n".join(parts)
+    _diets_cache = (sig, result)
+    return result
 
 
 def diet_prompt() -> str:
