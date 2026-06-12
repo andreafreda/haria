@@ -155,6 +155,10 @@ async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Non sei autorizzato a usare HARIA.")
         return
 
+    if not cfg.get("modules", {}).get("voice", True):
+        await update.message.reply_text("Trascrizione vocale disabilitata nella configurazione.")
+        return
+
     groq_key = cfg.get("groq_key", "")
     if not groq_key:
         await update.message.reply_text("Trascrizione vocale non configurata (groq_key mancante).")

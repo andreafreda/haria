@@ -51,6 +51,10 @@ async def _fire(reminder_id: int, user_id: str, message: str, recurring: str | N
     # disattiva il one-shot SOLO a invio riuscito: se Telegram e' irraggiungibile
     # un retry dopo 60s; se fallisce anche quello il reminder resta attivo e
     # verra' ricaricato al prossimo riavvio (no perdita).
+    if _bot is None:
+        logger.warning("Promemoria %s non inviato: modulo telegram disabilitato (_bot=None). "
+                       "Reminder lasciato attivo.", reminder_id)
+        return
     sent = False
     for attempt in range(2):
         try:
@@ -125,6 +129,9 @@ def cancel_job(reminder_id: int):
 # ---- briefing news ----
 
 async def _fire_briefing(briefing_id: int, user_id: str, topics: str, num_news: int = 5):
+    if _bot is None:
+        logger.warning("Briefing %s non inviato: modulo telegram disabilitato.", briefing_id)
+        return
     try:
         from modules import news
         text = await news.generate(topics, user_id, num_news)
@@ -188,6 +195,8 @@ _MEAL_ORDER = {"colazione": 0, "pranzo": 1, "snack": 2, "cena": 3}
 
 async def _food_morning():
     """Manda a ogni utente il piano pasti di oggi."""
+    if _bot is None:
+        return
     today = date.today().isoformat()
     plan = await get_meal_plan(today, today)
     if not plan:
@@ -219,6 +228,8 @@ async def _food_morning():
 
 async def _food_weekly():
     """Report settimanale: media kcal/giorno per membro."""
+    if _bot is None:
+        return
     end = date.today()
     start = end - timedelta(days=6)
     cost = await get_shopping_cost(include_checked=True)
@@ -252,6 +263,8 @@ async def _food_weekly():
 
 async def _pantry_alert():
     """Avvisa gli utenti se ci sono scorte in scadenza entro 3 giorni."""
+    if _bot is None:
+        return
     exp = await get_pantry_expiring(3)
     if not exp:
         return

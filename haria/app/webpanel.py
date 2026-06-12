@@ -117,11 +117,12 @@ input[type=checkbox]{width:18px;height:18px;cursor:pointer}
 
 
 def _page(title: str, body: str) -> web.Response:
+    _chat_nav = '<a href="./chat">💬 Chat</a>' if cfg.get("modules", {}).get("ha_chat", True) else ""
     page = f"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HARIA — {title}</title><style>{_CSS}</style></head><body>
 <header>🤖 HARIA <span class="tagline">Home Assistant Reactive Intelligent Agent</span></header>
-<nav><a href="./">🏠 Home</a><a href="./chat">💬 Chat</a><a href="./briefings">📰 Notizie</a><span class="sep">Cibo</span><a href="./plan">🍽️ Piano</a><a href="./month">📅 Mese</a><a href="./diary">📖 Diario</a><a href="./profiles">👤 Profili</a><a href="./shopping">🛒 Spesa</a><a href="./pantry">📦 Dispensa</a><span class="sep">Soldi</span><a href="./economia">💰 Economia</a><span class="sep">Sistema</span><a href="./logs">⚠️ Log</a><a href="./export.csv">⬇️ Export</a></nav>
+<nav><a href="./">🏠 Home</a>{_chat_nav}<a href="./briefings">📰 Notizie</a><span class="sep">Cibo</span><a href="./plan">🍽️ Piano</a><a href="./month">📅 Mese</a><a href="./diary">📖 Diario</a><a href="./profiles">👤 Profili</a><a href="./shopping">🛒 Spesa</a><a href="./pantry">📦 Dispensa</a><span class="sep">Soldi</span><a href="./economia">💰 Economia</a><span class="sep">Sistema</span><a href="./logs">⚠️ Log</a><a href="./export.csv">⬇️ Export</a></nav>
 <main>{body}</main></body></html>"""
     return web.Response(text=page, content_type="text/html")
 
@@ -164,7 +165,8 @@ async def _h_home(request):
              "assistente AI via Telegram e chat HA: notizie, agenda, diario alimentare, "
              "ricerca web e altro.</div>")
     body += "<div class='sec'>Generale</div><div class='grid'>"
-    body += _tile("./chat", "💬", "Chat", "Parla con HARIA")
+    if cfg.get("modules", {}).get("ha_chat", True):
+        body += _tile("./chat", "💬", "Chat", "Parla con HARIA")
     body += _tile("./briefings", "📰", "Notizie", f"{len(briefs)} briefing attivi")
     body += "</div>"
     body += "<div class='sec'>Cibo</div><div class='grid'>"
@@ -989,8 +991,9 @@ def build_web_app() -> web.Application:
     app.router.add_get("/briefings", _h_briefings)
     app.router.add_post("/api/briefings/save", _h_briefings_save)
     app.router.add_post("/api/briefings/delete", _h_briefings_delete)
-    app.router.add_get("/chat", _h_chat)
-    app.router.add_post("/api/chat", _h_chat_api)
+    if cfg.get("modules", {}).get("ha_chat", True):
+        app.router.add_get("/chat", _h_chat)
+        app.router.add_post("/api/chat", _h_chat_api)
     app.router.add_get("/logs", _h_logs)
     app.router.add_post("/api/logs/clear", _h_logs_clear)
     app.router.add_get("/export.csv", _h_export)

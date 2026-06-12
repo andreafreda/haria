@@ -134,7 +134,7 @@ l'header o mockando cfg.
 ---
 
 ### TASK 40 — Implementare i flag `telegram` / `ha_chat` / `voice`
-- [ ] Stato: da fare
+- [x] Stato: FATTO
 
 **Decisione:** Andrea vuole i 3 flag RISPETTATI dal codice (oggi sono nello schema ma ignorati).
 

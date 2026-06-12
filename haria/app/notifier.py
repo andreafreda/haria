@@ -17,5 +17,6 @@ def get_bot():
 
 async def send(chat_id, text: str):
     if _bot is None:
-        raise RuntimeError("Bot Telegram non inizializzato")
+        logger.warning("Messaggio proattivo non inviato: modulo telegram disabilitato.")
+        return
     await _bot.send_message(chat_id=int(chat_id), text=text)

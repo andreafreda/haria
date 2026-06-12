@@ -38,6 +38,36 @@ async def test_ingress_disattivato(monkeypatch):
     assert await webpanel._ingress_only(_FakeReq(), _ok_handler) == "OK"
 
 
+# ---- TASK 40: flag ha_chat / telegram / voice ----
+
+def _routes(app):
+    return {r.resource.canonical for r in app.router.routes()}
+
+
+def test_ha_chat_false_no_route_chat(monkeypatch):
+    monkeypatch.setattr(cfg, "get", lambda k, d=None: {"ha_chat": False} if k == "modules" else d)
+    routes = _routes(webpanel.build_web_app())
+    assert "/api/chat" not in routes
+    assert "/chat" not in routes
+
+
+def test_ha_chat_true_route_chat(monkeypatch):
+    monkeypatch.setattr(cfg, "get", lambda k, d=None: {"ha_chat": True} if k == "modules" else d)
+    routes = _routes(webpanel.build_web_app())
+    assert "/api/chat" in routes
+
+
+async def test_fire_reminder_bot_none(monkeypatch):
+    import scheduler
+    called = []
+    monkeypatch.setattr(scheduler, "_bot", None)
+    monkeypatch.setattr(scheduler, "deactivate_reminder",
+                        lambda *a, **k: called.append(a))
+    # bot None: nessuna eccezione, reminder one-shot NON disattivato
+    await scheduler._fire(1, "123", "msg", None)
+    assert called == []
+
+
 # ---- TASK 36: prompt cache TTL 1h ----
 
 def test_get_tools_cache_ttl_1h():

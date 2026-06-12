@@ -104,34 +104,41 @@ async def _release_bot(token: str):
 
 async def main():
     token = cfg.get("telegram_token") or os.environ.get("TELEGRAM_TOKEN", "")
-    if not token:
-        logger.error("telegram_token non configurato")
-        return
+    mods = cfg.get("modules", {})
+    telegram_on = mods.get("telegram", True)
 
     logger.info("Inizializzazione DB...")
     await init_db()
 
     errorlog.install()
 
-    acquired = await _acquire_bot(token)
-    if not acquired:
-        logger.error("Impossibile avviare: bot Telegram non acquisibile")
-        return
+    app = None
+    if telegram_on:
+        if not token:
+            logger.error("telegram_token non configurato")
+            return
+        acquired = await _acquire_bot(token)
+        if not acquired:
+            logger.error("Impossibile avviare: bot Telegram non acquisibile")
+            return
+        app = build_app(token)
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=False)
+        notifier.set_bot(app.bot)
+    else:
+        logger.warning("Modulo telegram disabilitato: niente bot/polling. Promemoria, "
+                       "briefing e messaggi proattivi via Telegram NON consegnabili. "
+                       "Pannello web e tool restano attivi.")
 
-    app = build_app(token)
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=False)
+    bot = app.bot if app else None
 
-    notifier.set_bot(app.bot)
-
-    mods = cfg.get("modules", {})
     if (mods.get("agenda", False) or mods.get("food_diary", False)
             or mods.get("news", False) or mods.get("bollette", False)
             or mods.get("economia", False)):
-        await scheduler.start(app.bot)
+        await scheduler.start(bot)
     if mods.get("food_diary", False):
-        scheduler.schedule_food_jobs(app.bot)
+        scheduler.schedule_food_jobs(bot)
     # seed bollette da HA (una-tantum) prima di pubblicare i sensori MQTT
     if mods.get("bollette", False):
         try:
@@ -176,11 +183,14 @@ async def main():
         await web_runner.cleanup()
     except Exception:
         pass
-    await app.updater.stop()
-    await app.stop()
-    await app.shutdown()
-    await _release_bot(token)
-    logger.info("HARIA fermata. Bot Telegram rilasciato.")
+    if app:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+        await _release_bot(token)
+        logger.info("HARIA fermata. Bot Telegram rilasciato.")
+    else:
+        logger.info("HARIA fermata.")
 
 
 if __name__ == "__main__":
