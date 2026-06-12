@@ -197,7 +197,7 @@ chiamata con payload "" sul config topic del budget sparito e registro aggiornat
 ---
 
 ### TASK 42 — Split di memory.py in package (PER ULTIMO)
-- [ ] Stato: da fare
+- [x] Stato: FATTO
 
 **Decisione:** split con facade, zero modifiche nei file consumatori.
 
@@ -230,3 +230,12 @@ memory/
 ## Changelog fix
 
 (una riga per task completato: data, task, commit)
+
+- 2026-06-12 — TASK 35 — feat(engine): max_tokens 4096 — v0.1.99
+- 2026-06-12 — TASK 36 — feat(engine): prompt cache TTL 1h + beta header — v0.2.0
+- 2026-06-12 — TASK 37 — feat(telegram): drop_pending_updates=False — v0.2.1
+- 2026-06-12 — TASK 38 — chore(deps): pin esatto == — v0.2.2
+- 2026-06-12 — TASK 39 — feat(webpanel): auth ingress middleware + panel_auth — v0.2.3
+- 2026-06-12 — TASK 40 — feat(config): flag telegram/ha_chat/voice — v0.2.4
+- 2026-06-12 — TASK 41 — feat(mqtt): cleanup entità fantasma — v0.2.5
+- 2026-06-12 — TASK 42 — chore(memory): split in package (facade, API invariata; conftest patcha memory.core.DB_PATH) — v0.2.6
