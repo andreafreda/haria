@@ -72,7 +72,7 @@ arretrati (risposte tardive possibili). Nessuna mitigazione richiesta.
 ---
 
 ### TASK 38 — Pin esatto delle dipendenze
-- [ ] Stato: da fare
+- [x] Stato: FATTO
 
 **Decisione:** pin `==` su tutte le dipendenze (build addon riproducibile; ddgs è
 recidivo nei breaking change).
