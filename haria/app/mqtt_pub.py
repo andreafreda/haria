@@ -618,8 +618,8 @@ async def _publish_economia_body():
         "medie": medie,
     })
 
-    # --- elenco movimenti recenti (drill-down per categoria/mese) ---
-    movimenti = await movimenti_recenti(6)
+    # --- elenco movimenti (drill-down per categoria/mese, tutta la storia) ---
+    movimenti = await movimenti_recenti()
     _disc_sensor(
         "haria_econ_movimenti", "Movimenti recenti",
         f"{_BASE_ECON}/movimenti/state",

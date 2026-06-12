@@ -857,18 +857,20 @@ async def spese_mensili_per_categoria(months: int | None = None) -> dict:
     return {"mesi": mesi, "categorie": cats, "totali": totali}
 
 
-async def movimenti_recenti(months: int = 6) -> list[dict]:
-    """Elenco dei singoli movimenti (uscite) degli ultimi `months` mesi, per la
-    dashboard Lovelace (drill-down per categoria/mese). Esclude i trasferimenti.
-    Chiavi compatte per contenere la dimensione dell'attributo MQTT:
+async def movimenti_recenti(months: int | None = None) -> list[dict]:
+    """Elenco dei singoli movimenti (uscite) per la dashboard Lovelace (drill-down
+    per categoria/mese). months=None -> tutta la storia; N -> ultimi N mesi.
+    Esclude i trasferimenti. Chiavi compatte per contenere la dimensione attributo:
       d=data (YYYY-MM-DD), i=importo (valore assoluto), c=categoria, n=descrizione breve."""
-    today = date.today()
-    y, m = today.year, today.month
-    m -= (months - 1)
-    while m <= 0:
-        m += 12
-        y -= 1
-    da = f"{y:04d}-{m:02d}-01"
+    da = "0000-00-00"
+    if months is not None:
+        today = date.today()
+        y, m = today.year, today.month
+        m -= (months - 1)
+        while m <= 0:
+            m += 12
+            y -= 1
+        da = f"{y:04d}-{m:02d}-01"
     async with aiosqlite.connect(core.DB_PATH) as db:
         cur = await db.execute(
             "SELECT data, -importo, categoria, descrizione FROM econ_transazioni "
