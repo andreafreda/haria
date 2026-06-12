@@ -27,6 +27,7 @@ from memory import (
     get_bolletta_csv, get_bolletta_years,
     get_saldi, get_budget_status, riepilogo_spese, get_obiettivi,
     get_mqtt_topics, set_mqtt_topics, spese_mensili_per_categoria,
+    movimenti_recenti,
 )
 
 # Collector dei topic pubblicati nel giro corrente (per il cleanup delle entità
@@ -616,6 +617,18 @@ async def _publish_economia_body():
         "totali": storico["totali"],
         "medie": medie,
     })
+
+    # --- elenco movimenti recenti (drill-down per categoria/mese) ---
+    movimenti = await movimenti_recenti(6)
+    _disc_sensor(
+        "haria_econ_movimenti", "Movimenti recenti",
+        f"{_BASE_ECON}/movimenti/state",
+        icon="mdi:format-list-bulleted", device=_DEVICE_ECON,
+        json_attr_topic=f"{_BASE_ECON}/movimenti/attr",
+        object_id="economia_movimenti",
+    )
+    _pub(f"{_BASE_ECON}/movimenti/state", len(movimenti))
+    _pub(f"{_BASE_ECON}/movimenti/attr", {"movimenti": movimenti})
 
 
 _bg_tasks: set = set()

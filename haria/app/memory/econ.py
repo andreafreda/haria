@@ -855,3 +855,29 @@ async def spese_mensili_per_categoria(months: int | None = None) -> dict:
     # ordina categorie per totale complessivo decrescente
     cats = dict(sorted(cats.items(), key=lambda kv: -sum(kv[1])))
     return {"mesi": mesi, "categorie": cats, "totali": totali}
+
+
+async def movimenti_recenti(months: int = 6) -> list[dict]:
+    """Elenco dei singoli movimenti (uscite) degli ultimi `months` mesi, per la
+    dashboard Lovelace (drill-down per categoria/mese). Esclude i trasferimenti.
+    Chiavi compatte per contenere la dimensione dell'attributo MQTT:
+      d=data (YYYY-MM-DD), i=importo (valore assoluto), c=categoria, n=descrizione breve."""
+    today = date.today()
+    y, m = today.year, today.month
+    m -= (months - 1)
+    while m <= 0:
+        m += 12
+        y -= 1
+    da = f"{y:04d}-{m:02d}-01"
+    async with aiosqlite.connect(core.DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT data, -importo, categoria, descrizione FROM econ_transazioni "
+            "WHERE importo<0 AND categoria!=? AND data>=? ORDER BY data DESC",
+            (core.CATEGORIA_TRASFERIMENTO, da),
+        )
+        rows = await cur.fetchall()
+    out = []
+    for d, imp, cat, descr in rows:
+        out.append({"d": d, "i": round(float(imp), 2), "c": cat,
+                    "n": (descr or "").strip()[:32]})
+    return out

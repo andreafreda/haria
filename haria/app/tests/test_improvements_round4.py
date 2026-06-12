@@ -149,3 +149,11 @@ async def test_spese_mensili_tutta_storia(db):
     assert r["mesi"][0] == "2025-01"
     assert "2026-06" in r["mesi"]
     assert len(r["mesi"]) >= 17
+
+
+async def test_movimenti_recenti(db):
+    await db.add_transazione("contanti_andrea", "2026-06-02", -12.5, "alimentari", "pane")
+    await db.add_transazione("contanti_andrea", "2026-06-03", -5, "trasferimento", "giro")
+    mv = await db.movimenti_recenti(6)
+    assert any(m["n"] == "pane" and m["i"] == 12.5 and m["c"] == "alimentari" for m in mv)
+    assert all(m["c"] != "trasferimento" for m in mv)
