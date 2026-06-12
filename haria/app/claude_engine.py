@@ -321,7 +321,7 @@ async def chat(user_id: str, user_text: str, user_config: dict,
             force_respond = turn == MAX_TURNS - 1
             response = await client.messages.create(
                 model=MODEL,
-                max_tokens=1024,
+                max_tokens=4096,
                 system=system,
                 tools=get_tools(),
                 tool_choice=({"type": "tool", "name": "respond"} if force_respond
