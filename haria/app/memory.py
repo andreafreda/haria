@@ -6,6 +6,7 @@ profili nutrizionali, pasti, piano settimanale, spesa, dispensa, food_cache,
 ricerca full-text (FTS5).
 """
 import aiosqlite
+import json
 import os
 from datetime import date, timedelta
 
@@ -48,6 +49,12 @@ async def init_db():
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 data TEXT NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS mqtt_topics (
+                uid TEXT PRIMARY KEY,
+                config_topic TEXT NOT NULL,
+                state_topics TEXT NOT NULL,
+                kind TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -521,6 +528,38 @@ async def save_entity_cache(data: str):
                ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=CURRENT_TIMESTAMP""",
             (data,),
         )
+        await db.commit()
+
+
+async def get_mqtt_topics(kind: str) -> list[dict]:
+    """Registro dei topic MQTT pubblicati per un kind (economia/bollette/food).
+    Ritorna [{uid, config_topic, state_topics:[...]}]."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT uid, config_topic, state_topics FROM mqtt_topics WHERE kind=?", (kind,)
+        )
+        rows = await cur.fetchall()
+    out = []
+    for uid, ct, st in rows:
+        try:
+            topics = json.loads(st)
+        except (ValueError, TypeError):
+            topics = []
+        out.append({"uid": uid, "config_topic": ct, "state_topics": topics})
+    return out
+
+
+async def set_mqtt_topics(kind: str, rows: list[dict]):
+    """Sostituisce il registro dei topic per un kind con quelli del giro corrente."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM mqtt_topics WHERE kind=?", (kind,))
+        for r in rows:
+            await db.execute(
+                "INSERT OR REPLACE INTO mqtt_topics (uid, config_topic, state_topics, kind) "
+                "VALUES (?, ?, ?, ?)",
+                (r["uid"], r["config_topic"],
+                 json.dumps(r.get("state_topics", []), ensure_ascii=False), kind),
+            )
         await db.commit()
 
 

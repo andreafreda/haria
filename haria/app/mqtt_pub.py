@@ -11,6 +11,7 @@ Entità create (device "HARIA Cibo"):
               spesa (conteggio)
 """
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -25,7 +26,13 @@ from memory import (
     get_pantry, get_pantry_expiring, get_weight_stats,
     get_bolletta_csv, get_bolletta_years,
     get_saldi, get_budget_status, riepilogo_spese, get_obiettivi,
+    get_mqtt_topics, set_mqtt_topics,
 )
+
+# Collector dei topic pubblicati nel giro corrente (per il cleanup delle entità
+# fantasma). ContextVar => async-safe tra publish concorrenti (ogni task ha la
+# propria copia). None = nessuna raccolta attiva.
+_collect_var: contextvars.ContextVar = contextvars.ContextVar("mqtt_collect", default=None)
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +193,25 @@ def _disc_sensor(uid: str, name: str, state_topic: str, unit: str | None = None,
         payload["state_class"] = state_class
     if device_class:
         payload["device_class"] = device_class
+    coll = _collect_var.get()
+    if coll is not None:
+        st = [state_topic]
+        if json_attr_topic:
+            st.append(json_attr_topic)
+        coll.append({"uid": uid, "config_topic": cfg_topic, "state_topics": st})
     _pub(cfg_topic, payload)
+
+
+async def _cleanup_stale(kind: str, collected: list):
+    """Rimuove dalle entità HA quelle non più pubblicate in questo giro: payload
+    vuoto sul config topic = HA elimina l'entità; svuota anche i retained state."""
+    cur_uids = {r["uid"] for r in collected}
+    for old in await get_mqtt_topics(kind):
+        if old["uid"] not in cur_uids:
+            _pub(old["config_topic"], "", retain=True)
+            for st in old.get("state_topics", []):
+                _pub(st, "", retain=True)
+    await set_mqtt_topics(kind, collected)
 
 
 async def _members() -> list[str]:
@@ -196,6 +221,16 @@ async def _members() -> list[str]:
 
 async def publish_discovery():
     """Crea/aggiorna le entità via MQTT Discovery."""
+    token = _collect_var.set([])
+    try:
+        await _publish_discovery_body()
+    finally:
+        collected = _collect_var.get()
+        _collect_var.reset(token)
+    await _cleanup_stale("food", collected)
+
+
+async def _publish_discovery_body():
     for m in await _members():
         s = _slug(m)
         base = f"{_BASE}/{s}"
@@ -388,6 +423,16 @@ async def publish_bollette():
     una utenza lì (es. telefono), senza toccare questo file."""
     if not _enabled:
         return
+    token = _collect_var.set([])
+    try:
+        await _publish_bollette_body()
+    finally:
+        collected = _collect_var.get()
+        _collect_var.reset(token)
+    await _cleanup_stale("bollette", collected)
+
+
+async def _publish_bollette_body():
     cur_year = date.today().year
     for util, d in _BOLL_UTILITIES.items():
         label = d["label"]
@@ -433,6 +478,16 @@ async def publish_economia():
     per categoria); stato budget del mese per categoria con tetto impostato."""
     if not _enabled:
         return
+    token = _collect_var.set([])
+    try:
+        await _publish_economia_body()
+    finally:
+        collected = _collect_var.get()
+        _collect_var.reset(token)
+    await _cleanup_stale("economia", collected)
+
+
+async def _publish_economia_body():
     # --- saldi conti ---
     saldi = await get_saldi()
     totale = 0.0

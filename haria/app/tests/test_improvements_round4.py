@@ -68,6 +68,39 @@ async def test_fire_reminder_bot_none(monkeypatch):
     assert called == []
 
 
+# ---- TASK 41: cleanup entità MQTT fantasma ----
+
+async def test_mqtt_topics_roundtrip(db):
+    rows = [
+        {"uid": "a", "config_topic": "homeassistant/sensor/a/config", "state_topics": ["s/a"]},
+        {"uid": "b", "config_topic": "homeassistant/sensor/b/config", "state_topics": ["s/b", "s/b/attr"]},
+    ]
+    await db.set_mqtt_topics("economia", rows)
+    got = await db.get_mqtt_topics("economia")
+    assert {r["uid"] for r in got} == {"a", "b"}
+    bb = [r for r in got if r["uid"] == "b"][0]
+    assert bb["state_topics"] == ["s/b", "s/b/attr"]
+
+
+async def test_cleanup_stale_rimuove_fantasma(db, monkeypatch):
+    import mqtt_pub
+    # registro iniziale: 2 entità
+    await db.set_mqtt_topics("economia", [
+        {"uid": "a", "config_topic": "ha/sensor/a/config", "state_topics": ["s/a"]},
+        {"uid": "b", "config_topic": "ha/sensor/b/config", "state_topics": ["s/b"]},
+    ])
+    pubs = []
+    monkeypatch.setattr(mqtt_pub, "_pub", lambda t, p, retain=True: pubs.append((t, p)))
+    # giro corrente: solo 'a' -> 'b' va rimossa
+    await mqtt_pub._cleanup_stale("economia", [
+        {"uid": "a", "config_topic": "ha/sensor/a/config", "state_topics": ["s/a"]},
+    ])
+    assert ("ha/sensor/b/config", "") in pubs
+    assert ("s/b", "") in pubs
+    got = await db.get_mqtt_topics("economia")
+    assert {r["uid"] for r in got} == {"a"}
+
+
 # ---- TASK 36: prompt cache TTL 1h ----
 
 def test_get_tools_cache_ttl_1h():

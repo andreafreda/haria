@@ -165,7 +165,7 @@ con bot None → nessuna eccezione, warning loggato, reminder one-shot NON disat
 ---
 
 ### TASK 41 — Cleanup automatico entità MQTT fantasma
-- [ ] Stato: da fare
+- [x] Stato: FATTO
 
 **Decisione:** cleanup automatico (no tool manuale).
 
