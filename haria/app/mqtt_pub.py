@@ -597,8 +597,8 @@ async def _publish_economia_body():
             "raggiunto": o["raggiunto"],
         })
 
-    # --- storico spese per categoria × ultimi 12 mesi (matrice unica) ---
-    storico = await spese_mensili_per_categoria(12)
+    # --- storico spese per categoria × tutta la storia (matrice unica) ---
+    storico = await spese_mensili_per_categoria()
     _disc_sensor(
         "haria_econ_storico", "Spese storico mensile",
         f"{_BASE_ECON}/storico/state",

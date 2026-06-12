@@ -140,3 +140,12 @@ async def test_profilo_roundtrip(db):
     p = await db.get_profile("andrea")
     assert p["member"] == "andrea"
     assert p["kcal_target"] == 2000
+
+
+async def test_spese_mensili_tutta_storia(db):
+    await db.add_transazione("contanti_andrea", "2025-01-15", -10, "alimentari", "vecchio")
+    await db.add_transazione("contanti_andrea", "2026-06-01", -20, "alimentari", "recente")
+    r = await db.spese_mensili_per_categoria()  # None -> tutta la storia
+    assert r["mesi"][0] == "2025-01"
+    assert "2026-06" in r["mesi"]
+    assert len(r["mesi"]) >= 17

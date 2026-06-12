@@ -809,13 +809,23 @@ async def anni_con_dati() -> list[int]:
         return [r[0] for r in await cur.fetchall()]
 
 
-async def spese_mensili_per_categoria(months: int = 12) -> dict:
-    """Matrice spese (uscite) per categoria × ultimi `months` mesi (incluso il
-    corrente). Esclude i trasferimenti interni. Ritorna:
-      {"mesi": ["YYYY-MM", ...], "categorie": {cat: [val_per_mese...]},
-       "totali": [tot_per_mese...]}
-    Pensata per la dashboard Lovelace (un solo sensore con tutta la matrice)."""
+async def spese_mensili_per_categoria(months: int | None = None) -> dict:
+    """Matrice spese (uscite) per categoria × mesi. Esclude i trasferimenti interni.
+    months=None (default) -> TUTTA la storia (dal primo movimento al mese corrente),
+    così aggiungendo mesi non si perdono i precedenti. months=N -> solo ultimi N mesi.
+    Ritorna {"mesi": ["YYYY-MM", ...], "categorie": {cat: [val...]}, "totali": [...]}.
+    Un solo sensore con l'intera matrice per la dashboard Lovelace."""
     today = date.today()
+    if months is None:
+        async with aiosqlite.connect(core.DB_PATH) as db:
+            cur = await db.execute("SELECT MIN(substr(data,1,7)) FROM econ_transazioni")
+            first = (await cur.fetchone())[0]
+        if first:
+            fy, fm = int(first[:4]), int(first[5:7])
+            months = (today.year - fy) * 12 + (today.month - fm) + 1
+        else:
+            months = 1
+        months = max(1, min(months, 120))  # cap di sicurezza (10 anni)
     mesi = []
     y, m = today.year, today.month
     for _ in range(months):
