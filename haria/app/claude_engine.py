@@ -325,11 +325,13 @@ async def chat(user_id: str, user_text: str, user_config: dict,
 
             tool_results = []
             reply = None
+            respond_ids: list[str] = []
 
             for block in response.content:
                 if block.type == "tool_use":
                     if block.name == "respond":
                         reply = block.input.get("text", "")
+                        respond_ids.append(block.id)
                     else:
                         result = await _run_tool(block.name, block.input, user_id)
                         tool_results.append({
@@ -342,7 +344,16 @@ async def chat(user_id: str, user_text: str, user_config: dict,
             # eseguiti (side effect reali) ma il modello non ne ha i risultati.
             # Ignora il respond prematuro e continua il loop coi tool_results,
             # così il modello richiama respond al giro dopo con i risultati.
+            # NB: l'API esige un tool_result per OGNI tool_use del messaggio
+            # assistant, quindi anche i respond ignorati ne ricevono uno.
             if reply is not None and tool_results:
+                for rid in respond_ids:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": rid,
+                        "content": ("Risposta ignorata: esamina prima i risultati "
+                                    "degli altri tool, poi richiama respond."),
+                    })
                 reply = None
 
             if reply is not None:
