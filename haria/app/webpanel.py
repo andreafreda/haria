@@ -957,8 +957,25 @@ async def _h_export(request):
     )
 
 
+INGRESS_GATEWAY_IP = "172.30.32.2"  # proxy ingress del Supervisor
+
+
+@web.middleware
+async def _ingress_only(request, handler):
+    """Ammette solo richieste via ingress HA (header X-Ingress-Path o IP del
+    gateway Supervisor) + localhost (debug container). Disattivabile con
+    panel_auth: false."""
+    if not cfg.get("panel_auth", True):
+        return await handler(request)
+    peer = request.remote or ""
+    has_ingress_header = bool(request.headers.get("X-Ingress-Path"))
+    if has_ingress_header or peer == INGRESS_GATEWAY_IP or peer in ("127.0.0.1", "::1"):
+        return await handler(request)
+    return web.Response(status=401, text="Accesso solo via ingress Home Assistant")
+
+
 def build_web_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[_ingress_only])
     app.router.add_get("/", _h_home)
     app.router.add_get("/plan", _h_plan)
     app.router.add_get("/month", _h_month)

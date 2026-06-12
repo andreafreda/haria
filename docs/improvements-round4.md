@@ -95,7 +95,7 @@ recidivo nei breaking change).
 ---
 
 ### TASK 39 — Auth del webpanel: verifica header ingress, dietro toggle
-- [ ] Stato: da fare
+- [x] Stato: FATTO
 
 **Decisione:** verifica ingress configurabile via feature toggle (come gli altri flag),
 default ATTIVO.
