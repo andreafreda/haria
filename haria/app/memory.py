@@ -12,6 +12,7 @@ from datetime import date, timedelta
 import econ_def
 
 DB_PATH = os.environ.get("DB_PATH", "/config/haria.db")
+CATEGORIA_TRASFERIMENTO = "trasferimento"  # esclusa dai report; protetta da rename/merge/delete
 MAX_HISTORY = 10          # turni raw inviati a ogni richiesta
 SUMMARY_BATCH = 20        # turni vecchi piegati nel summary per giro
 _FTS_OK = False           # FTS5 disponibile (settato in init_db)
@@ -1720,6 +1721,8 @@ async def add_regola(keyword: str, categoria: str) -> str:
     cat = (categoria or "").strip().lower()
     if not kw or not cat:
         raise ValueError("keyword e categoria obbligatorie")
+    if len(kw) < 3:
+        raise ValueError("keyword troppo corta: minimo 3 caratteri")
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("INSERT OR IGNORE INTO econ_categorie (nome) VALUES (?)", (cat,))
         await db.execute(
@@ -1775,6 +1778,27 @@ async def applica_regole() -> dict:
                 out[nuova] += 1
         await db.commit()
     return dict(out)
+
+
+async def applica_regola(keyword: str) -> int:
+    """Applica UNA regola alle transazioni esistenti. Ritorna n. aggiornate.
+    Usata all'aggiunta di una regola: non tocca le altre categorie già corrette
+    a mano (a differenza di applica_regole che ri-applica tutto)."""
+    kw = (keyword or "").strip().lower()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT categoria FROM econ_regole WHERE keyword=?", (kw,))
+        row = await cur.fetchone()
+        if not row:
+            return 0
+        cat = row[0]
+        cur = await db.execute(
+            "UPDATE econ_transazioni SET categoria=? "
+            "WHERE categoria!=? AND instr(lower(descrizione), ?) > 0",
+            (cat, cat, kw),
+        )
+        await db.commit()
+        return cur.rowcount
 
 
 async def import_transazioni(conto: str, movimenti: list[dict]) -> dict:
@@ -1856,6 +1880,8 @@ async def delete_categoria(nome: str) -> dict:
     """Elimina una categoria. Se è usata da transazioni NON cancella
     (ritorna in_uso + conteggio): usare rename/merge per spostarle prima."""
     cat = (nome or "").strip()
+    if cat.lower() == CATEGORIA_TRASFERIMENTO:
+        return {"ok": False, "protetta": True}
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (cat,)
@@ -1870,6 +1896,12 @@ async def delete_categoria(nome: str) -> dict:
         n = (await cur.fetchone())[0]
         if n > 0:
             return {"ok": False, "in_uso": True, "transazioni": n}
+        cur = await db.execute(
+            "SELECT count(*) FROM econ_regole WHERE categoria=?", (canon,)
+        )
+        nr = (await cur.fetchone())[0]
+        if nr > 0:
+            return {"ok": False, "in_uso_regole": True, "regole": nr}
         await db.execute("DELETE FROM econ_categorie WHERE nome=?", (canon,))
         await db.commit()
     return {"ok": True}
@@ -1880,6 +1912,8 @@ async def rename_categoria(old: str, new: str) -> bool:
     new = (new or "").strip().lower()
     if not new:
         return False
+    if (old or "").strip().lower() == CATEGORIA_TRASFERIMENTO:
+        return False  # categoria di sistema, esclude i giroconti dai report
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (old,)
@@ -1909,6 +1943,8 @@ async def rename_categoria(old: str, new: str) -> bool:
 async def merge_categoria(src: str, dst: str) -> bool:
     """Sposta tutte le transazioni da 'src' a 'dst' e cancella 'src'.
     False se src assente. 'dst' viene creata se non esiste."""
+    if (src or "").strip().lower() == CATEGORIA_TRASFERIMENTO:
+        return False  # categoria di sistema, esclude i giroconti dai report
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "SELECT nome FROM econ_categorie WHERE lower(nome)=lower(?)", (src,)
@@ -2171,8 +2207,8 @@ async def riepilogo_spese(data_da: str | None = None, data_a: str | None = None,
     # esclude i trasferimenti INTERNI tra i propri conti (ricariche, P2P famiglia):
     # non sono né reddito né spesa reale. I bonifici a terzi NON sono 'trasferimento'
     # quindi restano contati. I saldi (get_saldi) invece li contano sempre.
-    where = "WHERE t.categoria!='trasferimento'"
-    params: list = []
+    where = "WHERE t.categoria!=?"
+    params: list = [CATEGORIA_TRASFERIMENTO]
     if conto:
         where += " AND c.nome=?"
         params.append(conto)
@@ -2213,8 +2249,8 @@ async def riepilogo_spese(data_da: str | None = None, data_a: str | None = None,
 
 async def andamento_mensile(year: int, intestatario: str | None = None) -> list[dict]:
     """Per i 12 mesi dell'anno: entrate, uscite, netto. Filtro opz intestatario."""
-    where = "WHERE t.data LIKE ? AND t.categoria!='trasferimento'"
-    params: list = [f"{int(year):04d}-%"]
+    where = "WHERE t.data LIKE ? AND t.categoria!=?"
+    params: list = [f"{int(year):04d}-%", CATEGORIA_TRASFERIMENTO]
     if intestatario:
         where += " AND c.intestatario=?"
         params.append(intestatario)
@@ -2240,8 +2276,8 @@ async def andamento_mensile(year: int, intestatario: str | None = None) -> list[
 async def spese_categoria_anno(year: int, intestatario: str | None = None) -> list[dict]:
     """Spese (uscite) per categoria nell'anno: [{categoria, totale, mesi:[12]}],
     ordinato per totale decrescente. Filtro opz intestatario."""
-    where = "WHERE t.importo < 0 AND t.data LIKE ? AND t.categoria!='trasferimento'"
-    params: list = [f"{int(year):04d}-%"]
+    where = "WHERE t.importo < 0 AND t.data LIKE ? AND t.categoria!=?"
+    params: list = [f"{int(year):04d}-%", CATEGORIA_TRASFERIMENTO]
     if intestatario:
         where += " AND c.intestatario=?"
         params.append(intestatario)

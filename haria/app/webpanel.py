@@ -819,7 +819,7 @@ async def _h_briefings_save(request):
         return web.json_response({"error": "Indica il cron"}, status=400)
     if not scheduler.is_running():
         return web.json_response({"error": "Scheduler non attivo: abilita almeno un "
-                                 "modulo tra agenda/food_diary/news"}, status=503)
+                                 "modulo tra agenda/food_diary/news/bollette/economia"}, status=503)
     try:
         num_news = max(1, min(20, int(data.get("num_news") or 5)))
     except (TypeError, ValueError):

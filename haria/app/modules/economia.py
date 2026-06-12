@@ -23,7 +23,7 @@ from memory import (
     set_obiettivo, accantona, delete_obiettivo, get_obiettivi,
     list_conti, add_conto, update_conto, delete_conto,
     list_transazioni, update_transazione, delete_transazione,
-    add_regola, delete_regola, list_regole, applica_regole,
+    add_regola, delete_regola, list_regole, applica_regole, applica_regola,
 )
 
 NAME = "economia"
@@ -291,7 +291,10 @@ TOOLS = [
             "quando l'utente dice 'tutti i X mettili in Y' (es. 'i baiano sono "
             "alimentari', 'esselunga = alimentari'). azione: lista | aggiungi "
             "{keyword, categoria} | elimina {keyword} | applica (ri-applica le regole "
-            "a tutti i movimenti già presenti)."
+            "a tutti i movimenti già presenti). ATTENZIONE: 'applica' ri-applica TUTTE "
+            "le regole a TUTTI i movimenti e sovrascrive eventuali categorie corrette "
+            "a mano; usala solo su richiesta esplicita. 'aggiungi' invece applica solo "
+            "la regola nuova e non tocca le correzioni manuali."
         ),
         "input_schema": {
             "type": "object",
@@ -373,12 +376,15 @@ async def _gestisci_regole(inputs: dict) -> str:
         cat = (inputs.get("categoria") or "").strip()
         if not kw or not cat:
             return "Servono keyword e categoria."
-        c = await add_regola(kw, cat)
-        # applica subito alle transazioni esistenti
-        res = await applica_regole()
+        try:
+            c = await add_regola(kw, cat)
+        except ValueError as e:
+            return f"Regola non valida: {e}"
+        # applica SOLO la regola nuova: non tocca le correzioni manuali
+        n = await applica_regola(kw)
         mqtt_pub.request_economia_refresh()
         return json.dumps({"ok": True, "azione": "aggiungi", "keyword": kw.lower(),
-                           "categoria": c, "aggiornati_esistenti": res.get(c, 0)},
+                           "categoria": c, "aggiornati_esistenti": n},
                           ensure_ascii=False)
     if azione == "elimina":
         kw = (inputs.get("keyword") or "").strip()
@@ -618,14 +624,23 @@ async def _gestisci_categorie(inputs: dict) -> str:
         if not nome:
             return "Nome categoria mancante."
         res = await delete_categoria(nome)
+        if res.get("protetta"):
+            return ("La categoria 'trasferimento' è di sistema: serve a escludere i "
+                    "giroconti dai report, non si può rinominare/eliminare.")
         if res.get("in_uso"):
             return (f"Categoria '{nome}' usata da {res['transazioni']} transazioni: "
                     "non la elimino. Uniscila a un'altra (azione unisci) prima.")
+        if res.get("in_uso_regole"):
+            return (f"Categoria '{nome}' usata da {res['regole']} regole di "
+                    "auto-categorizzazione: elimina prima le regole (gestisci_regole).")
         if not res.get("ok"):
             return f"Categoria '{nome}' non trovata."
         return json.dumps({"ok": True, "azione": "elimina", "categoria": nome.lower()}, ensure_ascii=False)
     da = (inputs.get("da") or "").strip()
     a = (inputs.get("a") or "").strip()
+    if da.lower() == "trasferimento" and azione in ("rinomina", "unisci"):
+        return ("La categoria 'trasferimento' è di sistema: serve a escludere i "
+                "giroconti dai report, non si può rinominare/eliminare.")
     if azione == "rinomina":
         if not da or not a:
             return "Per rinominare servono 'da' (categoria esistente) e 'a' (nuovo nome)."

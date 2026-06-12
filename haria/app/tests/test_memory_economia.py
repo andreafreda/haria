@@ -642,3 +642,69 @@ async def test_migrazione_conti_generici_una_tantum(db):
     assert (await db.get_conto("paypal"))["attivo"] is True
     await db.init_db()  # secondo avvio
     assert (await db.get_conto("paypal"))["attivo"] is True
+
+
+# ---- bugfix round 2 (review 2026-06-12) ----
+
+async def test_applica_regola_non_tocca_correzioni_manuali(db):
+    # TASK 22: aggiungere una regola nuova non deve sovrascrivere categorie
+    # corrette a mano da altri movimenti
+    await db.add_transazione("contanti_andrea", "2026-06-01", -30, "regali", "esselunga fiori")
+    await db.add_regola("esselunga", "alimentari")  # regola preesistente
+    await db.add_transazione("contanti_andrea", "2026-06-02", -10, "alimentari", "conad latte")
+    await db.add_regola("conad", "alimentari")
+    n = await db.applica_regola("conad")  # applica solo la regola nuova
+    assert n == 0  # conad gia' alimentari
+    tx = await db.list_transazioni()
+    esselunga = [t for t in tx if "esselunga" in t["descrizione"]][0]
+    assert esselunga["categoria"] == "regali"  # correzione manuale preservata
+
+
+async def test_applica_regola_aggiorna_solo_match(db):
+    await db.add_transazione("contanti_andrea", "2026-06-01", -30, "altro", "baiano spesa")
+    await db.add_transazione("contanti_andrea", "2026-06-02", -10, "altro", "bar centrale")
+    await db.add_regola("baiano", "alimentari")
+    n = await db.applica_regola("baiano")
+    assert n == 1
+    tx = await db.list_transazioni()
+    assert [t for t in tx if "baiano" in t["descrizione"]][0]["categoria"] == "alimentari"
+    assert [t for t in tx if "bar" in t["descrizione"]][0]["categoria"] == "altro"
+
+
+async def test_add_regola_keyword_troppo_corta(db):
+    # TASK 24
+    with pytest.raises(ValueError):
+        await db.add_regola("po", "alimentari")
+    assert await db.list_regole() == []
+
+
+async def test_rename_categoria_trasferimento_protetta(db):
+    # TASK 23
+    assert await db.rename_categoria("trasferimento", "giroconti") is False
+    assert await db.merge_categoria("trasferimento", "altro") is False
+
+
+async def test_riepilogo_esclude_trasferimento(db):
+    # TASK 23: i giroconti restano esclusi dai report
+    await db.add_transazione("contanti_andrea", "2026-06-01", -100, "trasferimento", "ricarica")
+    await db.add_transazione("contanti_andrea", "2026-06-02", -20, "alimentari", "spesa")
+    res = await db.riepilogo_spese()
+    assert res["uscite"] == -20
+    cats = {c["categoria"] for c in res["per_categoria"]}
+    assert "trasferimento" not in cats
+
+
+async def test_delete_categoria_protetta_trasferimento(db):
+    # TASK 23
+    res = await db.delete_categoria("trasferimento")
+    assert res["ok"] is False
+    assert res["protetta"] is True
+
+
+async def test_delete_categoria_in_uso_regole(db):
+    # TASK 26
+    await db.add_regola("twitch", "svago")
+    res = await db.delete_categoria("svago")
+    assert res["ok"] is False
+    assert res["in_uso_regole"] is True
+    assert res["regole"] == 1
