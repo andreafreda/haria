@@ -115,3 +115,18 @@ async def test_build_system_cache_ttl_1h(db, monkeypatch):
     monkeypatch.setattr(claude_engine, "get_entity_cache", _cache_x)
     blocks = await claude_engine._build_system("123", {"name": "Test"})
     assert blocks[0]["cache_control"]["ttl"] == "1h"
+
+
+# ---- storico spese per categoria (dashboard Lovelace) ----
+
+async def test_spese_mensili_per_categoria(db):
+    await db.add_transazione("contanti_andrea", "2026-06-05", -20, "alimentari", "x")
+    await db.add_transazione("contanti_andrea", "2026-05-10", -50, "alimentari", "y")
+    await db.add_transazione("contanti_andrea", "2026-06-07", -30, "trasferimento", "giro")
+    r = await db.spese_mensili_per_categoria(12)
+    assert len(r["mesi"]) == 12
+    assert "2026-06" in r["mesi"]
+    assert "trasferimento" not in r["categorie"]   # escluso
+    ali = r["categorie"]["alimentari"]
+    i_giu = r["mesi"].index("2026-06")
+    assert ali[i_giu] == 20

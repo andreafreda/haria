@@ -807,3 +807,41 @@ async def anni_con_dati() -> list[int]:
             "FROM econ_transazioni ORDER BY y"
         )
         return [r[0] for r in await cur.fetchall()]
+
+
+async def spese_mensili_per_categoria(months: int = 12) -> dict:
+    """Matrice spese (uscite) per categoria × ultimi `months` mesi (incluso il
+    corrente). Esclude i trasferimenti interni. Ritorna:
+      {"mesi": ["YYYY-MM", ...], "categorie": {cat: [val_per_mese...]},
+       "totali": [tot_per_mese...]}
+    Pensata per la dashboard Lovelace (un solo sensore con tutta la matrice)."""
+    today = date.today()
+    mesi = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        mesi.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    mesi.reverse()
+    idx = {ym: i for i, ym in enumerate(mesi)}
+    cats: dict = {}
+    totali = [0.0] * len(mesi)
+    async with aiosqlite.connect(core.DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT substr(data,1,7) ym, categoria, SUM(-importo) "
+            "FROM econ_transazioni "
+            "WHERE importo<0 AND categoria!=? AND substr(data,1,7)>=? "
+            "GROUP BY ym, categoria",
+            (core.CATEGORIA_TRASFERIMENTO, mesi[0]),
+        )
+        for ym, cat, tot in await cur.fetchall():
+            if ym not in idx:
+                continue
+            row = cats.setdefault(cat, [0.0] * len(mesi))
+            row[idx[ym]] = round(float(tot), 2)
+            totali[idx[ym]] = round(totali[idx[ym]] + float(tot), 2)
+    # ordina categorie per totale complessivo decrescente
+    cats = dict(sorted(cats.items(), key=lambda kv: -sum(kv[1])))
+    return {"mesi": mesi, "categorie": cats, "totali": totali}

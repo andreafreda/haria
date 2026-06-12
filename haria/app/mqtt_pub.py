@@ -26,7 +26,7 @@ from memory import (
     get_pantry, get_pantry_expiring, get_weight_stats,
     get_bolletta_csv, get_bolletta_years,
     get_saldi, get_budget_status, riepilogo_spese, get_obiettivi,
-    get_mqtt_topics, set_mqtt_topics,
+    get_mqtt_topics, set_mqtt_topics, spese_mensili_per_categoria,
 )
 
 # Collector dei topic pubblicati nel giro corrente (per il cleanup delle entità
@@ -596,6 +596,26 @@ async def _publish_economia_body():
             "quota_mensile": o["quota_mensile"] if o["quota_mensile"] is not None else "",
             "raggiunto": o["raggiunto"],
         })
+
+    # --- storico spese per categoria × ultimi 12 mesi (matrice unica) ---
+    storico = await spese_mensili_per_categoria(12)
+    _disc_sensor(
+        "haria_econ_storico", "Spese storico mensile",
+        f"{_BASE_ECON}/storico/state",
+        icon="mdi:table-large", device=_DEVICE_ECON,
+        json_attr_topic=f"{_BASE_ECON}/storico/attr",
+        object_id="economia_storico_mensile",
+    )
+    mesi = storico["mesi"]
+    cats = storico["categorie"]
+    medie = {cat: round(sum(v) / len(mesi), 2) for cat, v in cats.items()} if mesi else {}
+    _pub(f"{_BASE_ECON}/storico/state", len(mesi))
+    _pub(f"{_BASE_ECON}/storico/attr", {
+        "mesi": mesi,
+        "categorie": cats,
+        "totali": storico["totali"],
+        "medie": medie,
+    })
 
 
 _bg_tasks: set = set()
