@@ -34,7 +34,7 @@ trascurabile, si paga solo l'output effettivo).
 ---
 
 ### TASK 36 — Prompt caching con TTL 1 ora
-- [ ] Stato: da fare
+- [x] Stato: FATTO
 
 **Decisione:** Andrea vuole ridurre il ripagamento della lista entità nelle conversazioni
 riprese: TTL del prompt cache da 5 min (default) a 1 ora. NIENTE filtri sulla lista.

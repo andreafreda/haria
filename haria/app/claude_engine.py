@@ -124,7 +124,7 @@ def get_tools() -> list[dict]:
     head = CORE_TOOLS[:-1] + extra if extra else CORE_TOOLS[:-1]
     # cache_control sull'ultimo tool: cacha l'intero blocco tools (statico ogni
     # turno) riducendo input-token-per-minute e costo nel loop agentico.
-    last = {**CORE_TOOLS[-1], "cache_control": {"type": "ephemeral"}}
+    last = {**CORE_TOOLS[-1], "cache_control": {"type": "ephemeral", "ttl": "1h"}}
     return head + [last]
 
 
@@ -255,7 +255,7 @@ async def _build_system(user_id: str, user_config: dict) -> list[dict]:
         week_map_next=week_map_next,
     )
     return [
-        {"type": "text", "text": base, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": base, "cache_control": {"type": "ephemeral", "ttl": "1h"}},
         {"type": "text", "text": dt_block},
     ]
 
@@ -327,6 +327,7 @@ async def chat(user_id: str, user_text: str, user_config: dict,
                 tool_choice=({"type": "tool", "name": "respond"} if force_respond
                              else {"type": "any"}),
                 messages=messages,
+                extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},
             )
 
             tool_results = []
