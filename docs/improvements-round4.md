@@ -58,7 +58,7 @@ riprese: TTL del prompt cache da 5 min (default) a 1 ora. NIENTE filtri sulla li
 ---
 
 ### TASK 37 — Recupero messaggi Telegram arrivati durante i riavvii
-- [ ] Stato: da fare
+- [x] Stato: FATTO
 
 **Decisione:** Andrea ha scelto il recupero completo degli arretrati (oggi vengono scartati).
 

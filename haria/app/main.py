@@ -121,7 +121,7 @@ async def main():
     app = build_app(token)
     await app.initialize()
     await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
+    await app.updater.start_polling(drop_pending_updates=False)
 
     notifier.set_bot(app.bot)
 
