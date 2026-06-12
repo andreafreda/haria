@@ -267,11 +267,5 @@ async def clear_error_logs() -> int:
         return cursor.rowcount
 
 
-# ---- food_diary: profili ----
-
-_PROFILE_FIELDS = (
-    "member", "sex", "age", "height_cm", "weight_kg", "goal",
-    "activity_level", "kcal_target", "bmi", "allergies", "preferences", "restrictions",
-)
 
 

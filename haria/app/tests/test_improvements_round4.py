@@ -130,3 +130,13 @@ async def test_spese_mensili_per_categoria(db):
     ali = r["categorie"]["alimentari"]
     i_giu = r["mesi"].index("2026-06")
     assert ali[i_giu] == 20
+
+
+# ---- regressione split TASK 42: _PROFILE_FIELDS cross-modulo ----
+
+async def test_profilo_roundtrip(db):
+    # esercita food._profile_row (_PROFILE_FIELDS) che lo split aveva rotto
+    await db.upsert_profile("andrea", {"sex": "m", "age": 40, "kcal_target": 2000})
+    p = await db.get_profile("andrea")
+    assert p["member"] == "andrea"
+    assert p["kcal_target"] == 2000

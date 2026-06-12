@@ -14,6 +14,12 @@ def __getattr__(name):
     return getattr(sys.modules["memory"], name)
 
 
+_PROFILE_FIELDS = (
+    "member", "sex", "age", "height_cm", "weight_kg", "goal",
+    "activity_level", "kcal_target", "bmi", "allergies", "preferences", "restrictions",
+)
+
+
 def _profile_row(r) -> dict:
     return dict(zip(_PROFILE_FIELDS, r))
 
