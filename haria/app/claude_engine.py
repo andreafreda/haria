@@ -209,18 +209,11 @@ async def _build_system(user_id: str, user_config: dict) -> list[dict]:
     base = prompts.get("system_base", name=name)
     base += modules.prompt()
 
-    cached = await get_entity_cache()
-    if not cached:
-        try:
-            await refresh_entity_cache()
-            cached = await get_entity_cache()
-        except Exception as e:
-            logger.warning("Entity cache non disponibile (HA giù?): %s", e)
-            cached = None
-    if cached:
-        base += f"\n\nENTITÀ DISPONIBILI (entity_id | nome):\n{cached}"
-    else:
-        base += "\n\n(Entità HA non disponibili al momento: Home Assistant non risponde.)"
+    # La lista entità (a 1000+ entità ~30k token) NON va più nel system prompt:
+    # il modello la richiede on-demand via get_house_state (senza entity_ids) solo
+    # quando deve controllare/leggere un dispositivo. Quel tool_result viene cachato
+    # (vedi chat()), così le chat non-domotiche (economia/food/agenda) non pagano la
+    # lista, e quelle domotiche la pagano una volta sola per finestra di cache.
     if context:
         base += f"\n\nContesto utente: {context}"
 
@@ -330,6 +323,15 @@ async def chat(user_id: str, user_text: str, user_config: dict,
                 extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},
             )
 
+            u = getattr(response, "usage", None)
+            if u:
+                logger.info(
+                    "tok user=%s turn=%s in=%s out=%s cache_w=%s cache_r=%s",
+                    user_id, turn, u.input_tokens, u.output_tokens,
+                    getattr(u, "cache_creation_input_tokens", 0),
+                    getattr(u, "cache_read_input_tokens", 0),
+                )
+
             tool_results = []
             reply = None
             respond_ids: list[str] = []
@@ -341,11 +343,18 @@ async def chat(user_id: str, user_text: str, user_config: dict,
                         respond_ids.append(block.id)
                     else:
                         result = await _run_tool(block.name, block.input, user_id)
-                        tool_results.append({
+                        tr = {
                             "type": "tool_result",
                             "tool_use_id": block.id,
                             "content": result,
-                        })
+                        }
+                        # get_house_state senza entity_ids = lista entità completa
+                        # (~30k token a 1000+ entità). È stabile: cachala come tool_result
+                        # così nei giri successivi del loop e nei messaggi entro il TTL
+                        # è cache-read (0,1×) invece di ri-spedirla per intero.
+                        if block.name == "get_house_state" and not (block.input or {}).get("entity_ids"):
+                            tr["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+                        tool_results.append(tr)
 
             # respond chiamato insieme ad altri tool: gli altri tool sono stati
             # eseguiti (side effect reali) ma il modello non ne ha i risultati.

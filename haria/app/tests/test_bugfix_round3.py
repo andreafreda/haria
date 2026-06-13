@@ -152,8 +152,12 @@ async def _empty():
 
 
 async def test_build_system_ha_giu_no_eccezione(db, monkeypatch):
+    # La lista entità non sta più nel system prompt (ottimizzazione token: on-demand
+    # via get_house_state). _build_system non chiama get_states, quindi HA giù NON
+    # può far esplodere la costruzione del system, e il prompt non contiene entità.
     monkeypatch.setattr(claude_engine, "refresh_entity_cache", _raise_conn)
     monkeypatch.setattr(claude_engine, "get_entity_cache", _empty)
     sys_blocks = await claude_engine._build_system("123", {"name": "Test"})
     txt = sys_blocks[0]["text"]
-    assert "non disponibili" in txt
+    assert "ENTITÀ DISPONIBILI" not in txt
+    assert "get_house_state" in txt  # il prompt istruisce a chiederle on-demand
