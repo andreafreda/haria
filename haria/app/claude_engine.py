@@ -308,6 +308,10 @@ async def chat(user_id: str, user_text: str, user_config: dict,
     system = await _build_system(user_id, user_config)
 
     MAX_TURNS = 8
+    # Anthropic ammette max 4 blocchi cache_control per richiesta (tools + system
+    # ne usano 2). Cacha solo la PRIMA discovery entità per non sforare se il
+    # modello richiama get_house_state più volte nello stesso giro.
+    entities_cached = False
     try:
         for turn in range(MAX_TURNS):
             # ultimo giro: forza una risposta testuale (evita loop infinito di tool)
@@ -352,8 +356,10 @@ async def chat(user_id: str, user_text: str, user_config: dict,
                         # (~30k token a 1000+ entità). È stabile: cachala come tool_result
                         # così nei giri successivi del loop e nei messaggi entro il TTL
                         # è cache-read (0,1×) invece di ri-spedirla per intero.
-                        if block.name == "get_house_state" and not (block.input or {}).get("entity_ids"):
+                        if (not entities_cached and block.name == "get_house_state"
+                                and not (block.input or {}).get("entity_ids")):
                             tr["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
+                            entities_cached = True
                         tool_results.append(tr)
 
             # respond chiamato insieme ad altri tool: gli altri tool sono stati
