@@ -217,16 +217,24 @@ async def _build_system(user_id: str, user_config: dict) -> list[dict]:
     if context:
         base += f"\n\nContesto utente: {context}"
 
-    # Memoria a lungo termine: note salvate (auto-recall) + riassunto conversazioni vecchie.
+    # Memoria a lungo termine: note salvate (auto-recall) + riassunto conversazioni
+    # vecchie. Vanno in un blocco cache SEPARATO da `base`: cambiano spesso (HARIA
+    # salva note in modo proattivo; il summary si aggiorna ~ogni 20 turni), e se
+    # stessero in `base` ogni save_memory invaliderebbe l'intero prefisso stabile
+    # (system_base + prompt moduli + diete). Breakpoint proprio = `base` resta
+    # cache-hit, solo questo piccolo blocco si riscrive quando cambia.
+    volatile = ""
     notes = await get_notes(user_id)
     if notes:
         note_lines = "\n".join(f"- {k}: {v}" for k, v in notes.items())
-        base += ("\n\nMEMORIA UTENTE (note salvate, usale senza chiamare get_memory):\n"
-                 + note_lines)
+        volatile += ("MEMORIA UTENTE (note salvate, usale senza chiamare get_memory):\n"
+                     + note_lines)
     summary = await get_summary(user_id)
     if summary:
-        base += ("\n\nRIASSUNTO CONVERSAZIONI PRECEDENTI (contesto storico, non più nei messaggi):\n"
-                 + summary)
+        if volatile:
+            volatile += "\n\n"
+        volatile += ("RIASSUNTO CONVERSAZIONI PRECEDENTI (contesto storico, non più nei messaggi):\n"
+                     + summary)
 
     # Stable prefix cached; volatile datetime in separate uncached block.
     from datetime import timedelta
@@ -247,10 +255,15 @@ async def _build_system(user_id: str, user_config: dict) -> list[dict]:
         week_map=week_map,
         week_map_next=week_map_next,
     )
-    return [
+    blocks = [
         {"type": "text", "text": base, "cache_control": {"type": "ephemeral", "ttl": "1h"}},
-        {"type": "text", "text": dt_block},
     ]
+    if volatile:
+        # blocco memoria utente: cache_control proprio così non invalida `base`
+        blocks.append({"type": "text", "text": volatile,
+                       "cache_control": {"type": "ephemeral", "ttl": "1h"}})
+    blocks.append({"type": "text", "text": dt_block})
+    return blocks
 
 
 async def _maybe_summarize(user_id: str):

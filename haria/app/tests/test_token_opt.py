@@ -37,6 +37,34 @@ async def test_system_prompt_senza_lista_entita(db, monkeypatch):
     assert "light.x" not in txt
 
 
+async def test_note_e_summary_in_blocco_cache_separato(db, monkeypatch):
+    """Note + summary NON devono stare nel blocco `base` (stabile, cachato): se ci
+    stessero, ogni save_memory invaliderebbe l'intero prefisso. Devono avere un
+    blocco cache_control proprio, distinto da base."""
+    await db.save_note("123", "farmaco", "cardioaspirina ore 8")
+    await db.set_summary("123", "L'utente prende farmaci la mattina.")
+    blocks = await claude_engine._build_system("123", {"name": "Test"})
+
+    # base (blocco 0) NON contiene la nota
+    assert "cardioaspirina" not in blocks[0]["text"]
+    # esiste un blocco cachato separato con la memoria utente
+    mem = [b for b in blocks[1:] if "MEMORIA UTENTE" in b.get("text", "")]
+    assert mem, "blocco memoria utente assente"
+    assert mem[0].get("cache_control") == {"type": "ephemeral", "ttl": "1h"}
+    assert "cardioaspirina" in mem[0]["text"]
+    assert "prende farmaci" in mem[0]["text"]  # summary nello stesso blocco
+    # ultimo blocco = datetime, NON cachato (volatile ogni minuto)
+    assert "cache_control" not in blocks[-1]
+
+
+async def test_senza_note_nessun_blocco_memoria(db, monkeypatch):
+    """Utente senza note/summary: niente blocco memoria vuoto (Anthropic rifiuta
+    cache_control su testo vuoto)."""
+    blocks = await claude_engine._build_system("999", {"name": "Test"})
+    assert all("MEMORIA UTENTE" not in b.get("text", "") for b in blocks)
+    assert all(b.get("text", "") != "" for b in blocks)
+
+
 async def test_get_house_state_discovery_tool_result_cachato(db, monkeypatch):
     """Loop a 2 giri: discovery (get_house_state no entity_ids) poi respond.
     Il tool_result della discovery deve avere cache_control."""
