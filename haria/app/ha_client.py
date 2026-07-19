@@ -117,7 +117,9 @@ def _climate_hvac_fallback(domain: str, service: str, status: int) -> str | None
     turn_on non ha una modalità univoca, quindi usiamo 'auto', presente sulla
     maggior parte dei climate.
     """
-    if status != 400 or domain != "climate":
+    # HA segnala "servizio non supportato dall'entità" con 400, ma alcune
+    # versioni/entità lo propagano come 500. Copriamo entrambi.
+    if status not in (400, 500) or domain != "climate":
         return None
     return {"turn_off": "off", "turn_on": "auto"}.get(service)
 
