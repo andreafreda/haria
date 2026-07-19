@@ -92,6 +92,44 @@ async def ws_command(payload: dict) -> dict:
 
 async def call_service(domain: str, service: str, data: dict,
                        return_response: bool = False) -> dict:
+    try:
+        return await _post_service(domain, service, data, return_response)
+    except aiohttp.ClientResponseError as e:
+        # Alcuni climate non implementano turn_off/turn_on (HA risponde 400
+        # ServiceNotSupported). Ripieghiamo su set_hvac_mode, che ogni climate
+        # con la modalità corrispondente accetta. Il percorso normale resta
+        # invariato: il fallback scatta solo sull'errore.
+        fallback_mode = _climate_hvac_fallback(domain, service, e.status)
+        if fallback_mode is None:
+            raise
+        logger.info("climate.%s non supportato; ripiego su set_hvac_mode=%s",
+                    service, fallback_mode)
+        return await _post_service(
+            "climate", "set_hvac_mode", {**data, "hvac_mode": fallback_mode},
+            return_response)
+
+
+def _climate_hvac_fallback(domain: str, service: str, status: int) -> str | None:
+    """Modalità hvac con cui riprovare un turn_off/turn_on climate fallito.
+
+    Ritorna None quando non c'è un ripiego sensato (dominio/servizio diverso,
+    errore non 400): in quel caso il chiamante rilancia l'errore originale.
+    turn_on non ha una modalità univoca, quindi usiamo 'auto', presente sulla
+    maggior parte dei climate.
+    """
+    if status != 400 or domain != "climate":
+        return None
+    return {"turn_off": "off", "turn_on": "auto"}.get(service)
+
+
+async def _post_service(domain: str, service: str, data: dict,
+                        return_response: bool = False) -> dict:
+    """POST grezzo a /api/services; gestisce auth, connessione e timeout.
+
+    Alza aiohttp.ClientResponseError sugli status di errore HA (es. 400 quando
+    un servizio non è supportato dall'entità), così call_service può decidere
+    se ripiegare o propagare.
+    """
     url = f"{_base()}/api/services/{domain}/{service}"
     if return_response:
         url += "?return_response"
